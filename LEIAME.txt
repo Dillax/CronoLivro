@@ -1,4 +1,4 @@
-CronoLeitura v2.8 (PWA)
+CronoLeitura v2.9 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -56,7 +56,11 @@ HÁBITOS (aba "Hábitos")
 - Calendário do mês: cor mais acesa = mais tempo lido. Toque no dia para ver horário de
   início e fim de cada leitura, livro, tempo e páginas.
 - Período (7 dias, 30 dias, 12 meses, tudo): resumo, horários em que você mais lê e livros.
-- Tendência: minutos por semana nas últimas 12 semanas com a reta de tendência.
+- Evolução: hoje × ontem e ritmo da última leitura × anterior, com ▲/▼ e %.
+  · Dia a dia: minutos dos últimos 14 dias e cada dia de leitura comparado ao anterior.
+  · Entre leituras: ritmo (págs/h) de cada leitura e a diferença para a anterior;
+    média das últimas 5 leituras × 5 anteriores.
+  · Semanas: minutos por semana (12 semanas) e média das últimas 4 × 4 anteriores.
 - Leituras antigas entram pelo que foi cronometrado; a partir desta versão cada sessão
   também guarda o horário exato de início e fim.
 

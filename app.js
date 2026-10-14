@@ -1426,7 +1426,7 @@ const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); r
 const fmtMin = (sec) => { const m = Math.round(sec / 60); return m >= 60 ? Math.floor(m / 60) + ' h ' + pad(m % 60) : m + ' min'; };
 const hhmm = (ts) => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 const daySec = (k) => (S.daily[k] || 0) + (k === dateKey() ? unflushedSec() : 0);
-const hab = { range: '30', month: null, day: null };
+const hab = { range: '30', month: null, day: null, evo: 'day' };
 
 function allSessions() {
   const out = [];
@@ -1532,36 +1532,6 @@ function barsHtml(items, opts) {
         '<span class="hlab">' + esc(x.l) + '</span></div>';
     }).join('') + (opts.goal ? '<div class="hgoal" style="bottom:calc(' + clamp((opts.goal / max) * 100, 0, 100) + '% * var(--plot) + var(--lab))" data-tip="Meta ' + esc(opts.goalTip || '') + '"></div>' : '') + '</div>';
 }
-function trendSvg(vals, labels) {
-  const W = 320;
-  const H = 120;
-  const P = 6;
-  const n = vals.length;
-  const max = Math.max(1, ...vals);
-  const x = (i) => P + (i * (W - 2 * P)) / Math.max(1, n - 1);
-  const y = (v) => H - P - (v / max) * (H - 2 * P);
-  const mx = (n - 1) / 2;
-  const my = vals.reduce((a, v) => a + v, 0) / n;
-  let num = 0;
-  let den = 0;
-  vals.forEach((v, i) => { num += (i - mx) * (v - my); den += (i - mx) * (i - mx); });
-  const slope = den ? num / den : 0;
-  const a0 = my - slope * mx;
-  const pts = vals.map((v, i) => x(i).toFixed(1) + ',' + y(v).toFixed(1)).join(' ');
-  const area = 'M' + x(0) + ',' + (H - P) + ' L' + pts.split(' ').join(' L') + ' L' + x(n - 1) + ',' + (H - P) + ' Z';
-  const dots = vals.map((v, i) => '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) + '" r="4" class="tdot"><title>' + esc(labels[i] + ': ' + Math.round(v) + ' min') + '</title></circle>' +
-    '<rect x="' + (x(i) - (W / n) / 2).toFixed(1) + '" y="0" width="' + (W / n).toFixed(1) + '" height="' + H + '" fill="transparent" data-tip="' + esc(labels[i] + ': ' + Math.round(v) + ' min') + '"></rect>').join('');
-  return {
-    slope,
-    svg: '<svg class="trend" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Minutos por semana nas últimas ' + n + ' semanas">' +
-      '<line x1="' + P + '" y1="' + (H - P) + '" x2="' + (W - P) + '" y2="' + (H - P) + '" class="taxis"/>' +
-      '<path d="' + area + '" class="tarea"/>' +
-      '<polyline points="' + pts + '" class="tline"/>' +
-      '<line x1="' + x(0) + '" y1="' + y(Math.max(0, a0)).toFixed(1) + '" x2="' + x(n - 1) + '" y2="' + y(Math.max(0, a0 + slope * (n - 1))).toFixed(1) + '" class="tfit"/>' +
-      dots + '</svg>'
-  };
-}
-
 function renderHabits() {
   const el = $('#view-habits');
   const now = new Date();
@@ -1605,7 +1575,7 @@ function renderHabits() {
   const weekCard = '<div class="card"><h2>Esta semana</h2>' +
     '<div class="week-head"><div><strong class="big">' + daysRead + '</strong> de 7 dias com leitura</div>' +
     '<div class="muted">' + fmtMin(thisWeekSec) + ' · semana passada ' + fmtMin(lastWeekSec) + '</div></div>' +
-    barsHtml(weekItems, { label: 'Minutos lidos por dia nesta semana', values: true, min: 10, goal: dailyGoalMin, goalTip: dailyGoalMin + ' min/dia' }) +
+    barsHtml(weekItems, { cls: 'week-bars', label: 'Minutos lidos por dia nesta semana', values: true, min: 10, goal: dailyGoalMin, goalTip: dailyGoalMin + ' min/dia' }) +
     '<p class="note">Toque numa barra para ver o tempo e quantas vezes leu no dia. Valores em minutos.</p></div>';
 
   // ---- calendário
@@ -1694,21 +1664,111 @@ function renderHabits() {
       '<div class="brow-sub">' + fmtMin(o.sec) + ' · ' + nfmt(o.pages) + ' págs. · ' + o.n + (o.n === 1 ? ' sessão' : ' sessões') + '</div></div></div>';
   }).join('') : '<p class="muted">Nenhum livro lido neste período.</p>') + '</div>';
 
-  // ---- tendência (12 semanas)
-  const weeks = [];
-  const wlabels = [];
-  for (let i = 11; i >= 0; i--) {
-    const a = addDays(w0, -7 * i);
-    weeks.push(secBetween(a, addDays(a, 7)) / 60);
-    wlabels.push('semana de ' + a.getDate() + '/' + (a.getMonth() + 1));
-  }
-  const tr = trendSvg(weeks, wlabels);
-  const trendTxt = Math.abs(tr.slope) < 1 ? 'estável' : (tr.slope > 0 ? 'subindo ' : 'caindo ') + Math.abs(Math.round(tr.slope)) + ' min por semana';
-  const trendCard = '<div class="card"><h2>Tendência</h2><p class="muted">Minutos por semana nas últimas 12 semanas · tendência: <b class="' + (tr.slope >= 1 ? 'ok-text' : tr.slope <= -1 ? 'warn-text' : 'hl-text') + '">' + trendTxt + '</b></p>' +
-    tr.svg + '<div class="trend-x"><span>' + esc(wlabels[0].replace('semana de ', '')) + '</span><span>esta semana</span></div>' +
-    '<div class="legend"><span><i class="lg-line"></i>minutos na semana</span><span><i class="lg-fit"></i>tendência (reta média)</span></div></div>';
+  // ---- evolução: dia a dia, entre leituras e por semana
+  const evoCard = evolutionCard(sessions, now, w0);
+  el.innerHTML = goalCard + weekCard + calCard + '<div class="section-title">Período</div>' + filter + summary + hourCard + bookCard;
+  const weekEl = el.children[1];
+  if (weekEl) weekEl.insertAdjacentHTML('afterend', evoCard); else el.insertAdjacentHTML('beforeend', evoCard);
+}
 
-  el.innerHTML = goalCard + weekCard + calCard + '<div class="section-title">Período</div>' + filter + summary + hourCard + bookCard + trendCard;
+/* ---------- evolução ---------- */
+function deltaHtml(cur, prev, unit, digits) {
+  if (prev == null || !isFinite(prev)) return '<span class="delta flat">primeiro registro</span>';
+  const k = Math.pow(10, digits || 0);
+  cur = Math.round(cur * k) / k; // compara os mesmos números que aparecem na tela
+  prev = Math.round(prev * k) / k;
+  const d = cur - prev;
+  const f = (v) => nfmt(Math.abs(+v.toFixed(digits || 0)));
+  if (Math.abs(d) < (digits ? 0.05 : 0.5)) return '<span class="delta flat">= igual</span>';
+  const pct = prev > 0 ? ' (' + (d > 0 ? '+' : '−') + Math.round(Math.abs(d) / prev * 100) + '%)' : '';
+  return '<span class="delta ' + (d > 0 ? 'up' : 'down') + '">' + (d > 0 ? '▲ +' : '▼ −') + f(d) + ' ' + unit + pct + '</span>';
+}
+const speedOf = (x) => (x.sec >= 60 && x.pages > 0 ? x.pages / (x.sec / 3600) : null);
+const ddmm = (d) => pad(d.getDate()) + '/' + pad(d.getMonth() + 1);
+function evolutionCard(sessions, now, w0) {
+  // destaques
+  const todayK = dateKey(now);
+  const yK = dateKey(addDays(now, -1));
+  const tSec = daySec(todayK);
+  const ySec = daySec(yK);
+  const tPages = pagesBetween(startOfDay(now), addDays(startOfDay(now), 1));
+  const yPages = pagesBetween(startOfDay(addDays(now, -1)), startOfDay(now));
+  const sp = sessions.filter((x) => speedOf(x) != null);
+  const lastS = sp[sp.length - 1];
+  const prevS = sp[sp.length - 2];
+  const tiles = '<div class="evo-tiles">' +
+    '<div class="metric"><span class="m-label">Hoje × ontem</span><strong>' + fmtMin(tSec) + '</strong>' +
+      '<span class="m-sub">' + (tSec < 60 ? '<span class="delta flat">ainda não leu hoje</span>' : deltaHtml(tSec / 60, ySec / 60, 'min')) + '</span><span class="m-sub">ontem: ' + fmtMin(ySec) + ' · ' + nfmt(yPages) + ' págs.</span></div>' +
+    '<div class="metric"><span class="m-label">Ritmo da última leitura</span><strong>' + (lastS ? nfmt(Math.round(speedOf(lastS))) + ' págs/h' : '—') + '</strong>' +
+      '<span class="m-sub">' + (lastS ? deltaHtml(speedOf(lastS), prevS ? speedOf(prevS) : null, 'págs/h') : 'leia com o cronômetro') + '</span>' +
+      '<span class="m-sub">' + (prevS ? 'anterior: ' + nfmt(Math.round(speedOf(prevS))) + ' págs/h' : '') + '</span></div></div>';
+
+  const tabs = '<div class="seg seg-sm evo-seg">' + [['day', 'Dia a dia'], ['session', 'Entre leituras'], ['week', 'Semanas']].map(([k, l]) =>
+    '<button type="button" data-act="evoTab" data-v="' + k + '" aria-selected="' + (hab.evo === k) + '">' + l + '</button>').join('') + '</div>';
+
+  let body = '';
+  if (hab.evo === 'day') {
+    // 14 dias: barras com valor, hoje em destaque
+    const items = [];
+    for (let i = 13; i >= 0; i--) {
+      const d = addDays(startOfDay(now), -i);
+      const sec = daySec(dateKey(d));
+      const pg = pagesBetween(d, addDays(d, 1));
+      items.push({ v: sec / 60, vl: String(Math.round(sec / 60)), l: i % 2 ? '' : String(d.getDate()), hl: i === 0,
+        tip: WD[d.getDay()] + ' ' + ddmm(d) + ': ' + fmtMin(sec) + ' · ' + nfmt(pg) + ' págs.' });
+    }
+    // lista: cada dia de leitura comparado com o dia de leitura anterior
+    const days = Object.keys(S.daily).concat([todayK]).filter((k, i, a) => a.indexOf(k) === i && daySec(k) >= 60).sort().reverse();
+    const rows = days.slice(0, 7).map((k, i) => {
+      const d = new Date(k + 'T12:00:00');
+      const sec = daySec(k);
+      const prevK = days[i + 1];
+      const pg = pagesBetween(startOfDay(d), addDays(startOfDay(d), 1));
+      return '<div class="evo-row"><div class="evo-when">' + WD[d.getDay()] + ' ' + ddmm(d) + '</div>' +
+        '<div class="evo-val">' + fmtMin(sec) + '<small>' + nfmt(pg) + ' págs.</small></div>' +
+        '<div class="evo-d">' + deltaHtml(sec / 60, prevK ? daySec(prevK) / 60 : null, 'min') + (prevK ? '<small>vs ' + ddmm(new Date(prevK + 'T12:00:00')) + '</small>' : '') + '</div></div>';
+    }).join('');
+    body = '<p class="evo-cap">Minutos lidos por dia nos últimos 14 dias</p>' + barsHtml(items, { label: 'Minutos por dia, últimos 14 dias', values: true, min: 10 }) +
+      '<p class="evo-cap">Cada dia de leitura comparado ao dia de leitura anterior</p>' + (rows || '<p class="muted">Ainda sem dias de leitura.</p>');
+  } else if (hab.evo === 'session') {
+    const last = sp.slice(-12);
+    const items = last.map((x, i) => {
+      const v = speedOf(x);
+      const d = new Date(x.start);
+      return { v, vl: String(Math.round(v)), l: ddmm(d).slice(0, 2), hl: i === last.length - 1,
+        tip: ddmm(d) + ' ' + hhmm(x.start) + ': ' + Math.round(v) + ' págs/h · ' + fmtMin(x.sec) + ' · ' + x.pages + ' págs.' };
+    });
+    const avg = (arr) => (arr.length ? arr.reduce((a, x) => a + speedOf(x), 0) / arr.length : null);
+    const recent = sp.slice(-5);
+    const before = sp.slice(-10, -5);
+    const rA = avg(recent);
+    const bA = avg(before);
+    const head = rA != null && bA != null
+      ? '<p class="evo-head">Média das últimas 5 leituras: <b>' + nfmt(Math.round(rA)) + ' págs/h</b> ' + deltaHtml(rA, bA, 'págs/h') + ' sobre as 5 anteriores (' + nfmt(Math.round(bA)) + ').</p>'
+      : '<p class="evo-head">Faça mais algumas leituras cronometradas para comparar médias.</p>';
+    const rows = sp.slice(-6).reverse().map((x, i, arr) => {
+      const prev = sp[sp.length - 2 - i];
+      const b = bookById(x.bookId);
+      return '<div class="evo-row"><div class="evo-when">' + ddmm(new Date(x.start)) + ' ' + hhmm(x.start) + '<small>' + esc(b ? b.title : 'Livro removido') + '</small></div>' +
+        '<div class="evo-val">' + nfmt(Math.round(speedOf(x))) + ' págs/h<small>' + fmtMin(x.sec) + ' · ' + x.pages + ' págs.</small></div>' +
+        '<div class="evo-d">' + deltaHtml(speedOf(x), prev ? speedOf(prev) : null, '') + '</div></div>';
+    }).join('');
+    body = head + (items.length ? '<p class="evo-cap">Ritmo em cada leitura (páginas por hora), da mais antiga à mais recente</p>' + barsHtml(items, { label: 'Páginas por hora em cada leitura', values: true, min: 10 }) : '') +
+      '<p class="evo-cap">Cada leitura comparada à anterior</p>' + (rows || '<p class="muted">Ainda sem leituras com páginas marcadas.</p>');
+  } else {
+    const weeks = [];
+    for (let i = 11; i >= 0; i--) {
+      const a = addDays(w0, -7 * i);
+      const sec = secBetween(a, addDays(a, 7));
+      weeks.push({ v: sec / 60, vl: String(Math.round(sec / 60)), l: i === 0 ? 'esta' : ddmm(a).slice(0, 2), hl: i === 0,
+        tip: 'Semana de ' + ddmm(a) + ': ' + fmtMin(sec) + ' · ' + nfmt(pagesBetween(a, addDays(a, 7))) + ' págs.' });
+    }
+    const s4 = weeks.slice(-4).reduce((a, x) => a + x.v, 0) / 4;
+    const p4 = weeks.slice(-8, -4).reduce((a, x) => a + x.v, 0) / 4;
+    body = '<p class="evo-head">Média das últimas 4 semanas: <b>' + Math.round(s4) + ' min/semana</b> ' + deltaHtml(s4, p4 > 0 ? p4 : null, 'min') + ' sobre as 4 anteriores (' + Math.round(p4) + ' min).</p>' +
+      '<p class="evo-cap">Minutos por semana (o número embaixo é o dia em que a semana começa)</p>' + barsHtml(weeks, { label: 'Minutos por semana, últimas 12 semanas', values: true, min: 10 });
+  }
+  return '<div class="card evo"><h2>Evolução</h2>' + tiles + tabs + body + '<p class="note">▲ subiu · ▼ caiu em relação ao anterior. Toque nas barras para ver detalhes.</p></div>';
 }
 
 /* dica (tooltip) para barras e pontos: passar o mouse ou tocar */
@@ -1896,6 +1956,7 @@ const handlers = {
   goalDec: () => adjustGoal(-5),
   manual: () => openBookDialog({}),
   bellTest: (el) => { const was = S.settings.sound; S.settings.sound = true; bell(el.dataset.v); S.settings.sound = was; },
+  evoTab: (el) => { hab.evo = el.dataset.v; renderHabits(); const c = $('.evo'); if (c) c.scrollIntoView({ block: 'nearest' }); },
   habRange: (el) => { hab.range = el.dataset.v; renderHabits(); },
   calNav: (el) => { const m = hab.month; hab.month = new Date(m.getFullYear(), m.getMonth() + (+el.dataset.v), 1); hab.day = null; renderHabits(); },
   calDay: (el) => { hab.day = hab.day === el.dataset.k ? null : el.dataset.k; renderHabits(); const d = $('.day-detail'); if (d) d.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); },

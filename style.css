@@ -607,6 +607,22 @@ input, select { background: rgba(0, 0, 0, 0.18); border-color: rgba(215, 242, 25
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .lg-line { width: 16px; height: 0; border-top: 2px solid #29c5ff; display: inline-block; }
 .lg-fit { width: 16px; height: 0; border-top: 1.5px dashed #fff; display: inline-block; opacity: .8; }
+.evo-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.evo-tiles strong { font-size: 1.25rem; }
+.delta { font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.delta.up { color: #7dffcf; }
+.delta.down { color: #ffcf7a; }
+.delta.flat { color: var(--muted); font-weight: 600; }
+.evo-seg { margin: 4px 0 10px; }
+.evo-head { font-size: .86rem; color: var(--text); margin: 4px 0 6px; line-height: 1.5; }
+.evo-head b { color: var(--diamond-light); }
+.evo-cap { font-size: .76rem; color: var(--muted); margin: 10px 0 0; }
+.evo-row { display: grid; grid-template-columns: 1.1fr 1fr 1.1fr; gap: 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(205, 238, 255, .1); font-size: .84rem; }
+.evo-row:last-child { border-bottom: 0; }
+.evo-row small { display: block; font-size: .7rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evo-when { min-width: 0; color: var(--text); }
+.evo-val { font-weight: 700; color: var(--diamond-ice); }
+.evo-d { text-align: right; font-size: .8rem; }
 /* dica */
 .tip { position: fixed; z-index: 70; max-width: 260px; padding: 7px 10px; border-radius: 10px; font-size: .78rem; color: var(--text); background: rgba(4, 14, 30, .96); border: 1px solid rgba(205, 238, 255, .3); box-shadow: 0 0 14px rgba(41, 170, 255, .3); pointer-events: none; }
 

@@ -3,7 +3,7 @@
  * Requisições para outros domínios (Google Livros, Open Library, capas) vão direto à rede.
  * Para publicar uma nova versão, altere VERSION.
  */
-const VERSION = 'v2.8.0';
+const VERSION = 'v2.9.0';
 const CACHE = 'cronoleitura-' + VERSION;
 const COVERS = 'cronoleitura-capas'; // capas de outros sites (mantido entre versões)
 const ASSETS = [
