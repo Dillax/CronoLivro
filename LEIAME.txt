@@ -1,9 +1,8 @@
-CronoLeitura v2.5.1 (PWA)
+CronoLeitura v2.6 (PWA)
 
 COMO PUBLICAR
-1. Envie o conteúdo desta pasta para o seu site (ex.: GitHub Pages), mantendo a
-   pasta "icons/" ao lado do index.html. A pasta "servidor-amazon/" NÃO precisa ir para o
-   site: ela vai para o Cloudflare (veja servidor-amazon/GUIA-AMAZON.txt).
+1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
+   worker.js e GUIA-AMAZON.txt são do servidor opcional da Amazon (Cloudflare) e não atrapalham o site.
 2. Abra pelo endereço https. O service worker só funciona em https (ou localhost).
 3. No celular: menu do navegador > "Instalar app" / "Adicionar à tela inicial".
 
@@ -23,12 +22,23 @@ BUSCA DE LIVROS (digite título em português, autor ou ISBN)
 - O nº de páginas varia por edição: confira com o seu exemplar antes de salvar.
 - AMAZON (aba "Amazon"): mostra as capas da Amazon; tocar na capa importa capa, autor,
   editora, edição e páginas. Precisa do seu servidor gratuito no Cloudflare:
-  siga servidor-amazon/GUIA-AMAZON.txt (≈ 5 min) e cole o endereço no app.
+  siga GUIA-AMAZON.txt (≈ 5 min) e cole o endereço no app.
 - "Colar link da Amazon ou ISBN": com o servidor ligado, um link da Amazon (inclusive o curto
   a.co/… do app da Amazon) importa o livro direto. Sem servidor, ISBN e links /dp/ ainda funcionam
   pelas outras fontes.
 - Android com o app instalado: no app da Amazon toque em Compartilhar → CronoLeitura.
   (Reinstale o app depois de publicar esta versão para ele aparecer nessa lista.)
+
+CHAVE GRÁTIS DO GOOGLE LIVROS (resolve "limite atingido")
+Sem chave, o Google divide um limite único entre todos os sites sem chave, e ele esgota.
+1. Acesse https://console.cloud.google.com e entre com sua conta Google.
+2. No topo: "Selecionar projeto" > "Novo projeto" > nome CronoLeitura > Criar.
+3. Menu ≡ > "APIs e serviços" > "Biblioteca" > procure "Books API" > Ativar.
+4. "APIs e serviços" > "Credenciais" > "Criar credenciais" > "Chave de API". Copie a chave (AIza…).
+5. Toque na chave criada > "Restrições de aplicativos": Sites/referenciadores HTTP >
+   adicione  https://dillax.github.io/*   > "Restrições de API": Books API > Salvar.
+   (Assim a chave só funciona no seu site, mesmo ficando visível no código.)
+6. No app: Histórico > Google Livros > cole a chave. Sem cartão de crédito; ~1000 buscas/dia.
 
 CAPAS (sem servidor)
 - No cadastro do livro: "Buscar capa" mostra capas de Amazon (pelo ISBN), Google Livros e Open

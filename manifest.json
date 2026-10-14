@@ -1,5 +1,5 @@
 {
-  "id": "./",
+  "id": "cronoleitura",
   "name": "CronoLeitura — Tempo e Ritmo de Leitura",
   "short_name": "CronoLeitura",
   "description": "Cronometre quanto tempo leva cada página, acompanhe seus livros e veja quando vai terminar.",
@@ -18,25 +18,25 @@
   ],
   "icons": [
     {
-      "src": "icons/icon-192.png",
+      "src": "icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/icon-512.png",
+      "src": "icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "icons/icon-maskable-512.png",
+      "src": "icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     },
     {
-      "src": "icons/icon.svg",
+      "src": "icon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"

@@ -656,18 +656,27 @@ function gMap(it) {
   };
 }
 const G_FIELDS = 'title,subtitle,authors,publisher,publishedDate,pageCount,language,imageLinks(thumbnail,smallThumbnail),industryIdentifiers';
+/* Google Livros: sem chave, a cota é dividida com o mundo todo e esgota (erro 429).
+   Com a chave gratuita do usuário (Preferências) são ~1000 buscas/dia só dele. */
+let gPausedUntil = 0;
+const gKey = () => { const k = String(S.settings.gbKey || '').trim(); return /^[\w-]{20,60}$/.test(k) ? '&key=' + encodeURIComponent(k) : ''; };
+function gFetch(url) {
+  if (Date.now() < gPausedUntil) { const e = new Error('limite'); e.status = 429; return Promise.reject(e); }
+  return fetchJSON(url + gKey()).catch((e) => {
+    if (e.status === 429) gPausedUntil = Date.now() + 10 * 60000; // espera 10 min antes de tentar de novo
+    throw e;
+  });
+}
 function googleJobs(q) {
   const isbn = isbnOf(q);
   const base = 'https://www.googleapis.com/books/v1/volumes?printType=books&country=BR&fields=items(volumeInfo(' + G_FIELDS + '))&q=';
-  const qe = encodeURIComponent(q);
   const urls = isbn
     ? [base + encodeURIComponent('isbn:' + isbn)]
-    : [base + qe + '&langRestrict=pt&maxResults=40', base + qe + '&langRestrict=pt&orderBy=newest&maxResults=20', base + qe + '&maxResults=20',
-       base + encodeURIComponent('intitle:' + q) + '&maxResults=20'];
-  return urls.map((u) => fetchJSON(u).then((j) => (j.items || []).map(gMap)));
+    : [base + encodeURIComponent(q) + '&langRestrict=pt&maxResults=40', base + encodeURIComponent('intitle:' + q) + '&maxResults=20'];
+  return urls.map((u) => gFetch(u).then((j) => (j.items || []).map(gMap)));
 }
 async function googleById(id) {
-  const j = await fetchJSON('https://www.googleapis.com/books/v1/volumes/' + encodeURIComponent(id) + '?fields=volumeInfo(' + G_FIELDS + ')');
+  const j = await gFetch('https://www.googleapis.com/books/v1/volumes/' + encodeURIComponent(id) + '?fields=volumeInfo(' + G_FIELDS + ')');
   return gMap(j);
 }
 async function searchOpenLib(q) {
@@ -751,7 +760,9 @@ function organize(list, q, exact) {
     byKey.set(k, r);
     items.push(r);
   });
-  const kept = items.filter((r) => { scoreItem(r, toks, nq); return isbnQ || !toks.length || r.match >= 0.5; });
+  let kept = items.filter((r) => { scoreItem(r, toks, nq); return isbnQ || !toks.length || r.match >= 0.5; });
+  let loose = false;
+  if (!kept.length && items.length) { kept = items.slice(); loose = true; } // ex.: Open Library achou pelo título original
   const groups = new Map();
   kept.forEach((r) => {
     const gk = norm(r.title.split(/[:(–—]| - /)[0]) + '|' + lastName(r.author) + '|' + (r.pt ? 'pt' : 'x');
@@ -763,12 +774,12 @@ function organize(list, q, exact) {
     return { best: eds[0], eds };
   }).sort((a, b) => b.best.score - a.best.score);
   kept.forEach((r, i) => { r.i = i; });
-  return { items: kept, pt: all.filter((g) => g.best.pt), other: all.filter((g) => !g.best.pt) };
+  return { items: kept, pt: all.filter((g) => g.best.pt), other: all.filter((g) => !g.best.pt), loose };
 }
 function errText(e) {
   if (!e) return 'erro';
   if (e.name === 'AbortError') return 'demorou demais';
-  if (e.status === 429) return 'limite de consultas atingido (tente mais tarde)';
+  if (e.status === 429) return 'limite atingido — cadastre sua chave grátis em Histórico › Google Livros';
   if (e.status === 404) return 'não encontrado';
   if (e.status) return 'erro ' + e.status;
   return 'sem acesso (rede ou bloqueio do navegador)';
@@ -877,7 +888,8 @@ function resultsHtml(st, act) {
   const more = st.status === 'partial' ? '<div class="status-line"><div class="spinner"></div>Buscando mais edições…</div>' : '';
   const pt = st.pt.slice(0, 12).map((g) => groupHtml(g, act)).join('');
   const other = st.other.slice(0, 10).map((g) => groupHtml(g, act)).join('');
-  return (st.ref && st.ref.from ? '<div class="status-line ok-line">' + ICON.check + ' Edição identificada pelo link (' + esc(st.ref.from) + ').</div>' : '') +
+  const looseNote = st.loose ? '<div class="status-line">Nenhum título com essas palavras; abaixo está o que as fontes encontraram (pode estar com o título original, em outro idioma).</div>' : '';
+  return looseNote + (st.ref && st.ref.from ? '<div class="status-line ok-line">' + ICON.check + ' Edição identificada pelo link (' + esc(st.ref.from) + ').</div>' : '') +
     (pt || (st.status === 'done' ? '<div class="status-line">Nenhuma edição em português encontrada para esta busca.</div>' : '')) + more +
     (other ? '<details class="other"' + (pt ? '' : ' open') + '><summary>Edições em outros idiomas (' + st.other.length + ')</summary>' + other + '</details>' : '') + (st.status === 'done' ? diagHtml(st) : '');
 }
@@ -1166,8 +1178,8 @@ async function coverCandidates(title, author, isbn) {
   const qParts = [title ? 'intitle:' + title : '', author ? 'inauthor:' + author.split(',')[0] : ''].filter(Boolean).join(' ');
   const gBase = 'https://www.googleapis.com/books/v1/volumes?printType=books&maxResults=30&fields=items(volumeInfo(imageLinks(thumbnail,smallThumbnail),industryIdentifiers,language))&q=' + encodeURIComponent(qParts || title);
   const jobs = [
-    fetchJSON(gBase + '&langRestrict=pt').catch(() => ({})),
-    fetchJSON(gBase).catch(() => ({})),
+    gFetch(gBase + '&langRestrict=pt').catch(() => ({})),
+    Promise.resolve({}),
     fetchJSON('https://openlibrary.org/search.json?lang=pt&limit=12&fields=cover_i,editions,editions.cover_i,editions.isbn&q=' + encodeURIComponent([title, author].filter(Boolean).join(' '))).catch(() => ({}))
   ];
   const [gPt, gAll, ol] = await Promise.all(jobs);
@@ -1415,6 +1427,9 @@ function renderStats() {
       '<div class="field"><label for="prefAmz">Endereço do servidor</label><input id="prefAmz" type="url" inputmode="url" placeholder="https://cronoleitura-amazon.SEU-NOME.workers.dev" value="' + esc(S.settings.amazonApi || '') + '"></div>' +
       '<button class="btn block" type="button" data-act="amzSave">Testar e salvar</button>' +
       '<p class="note" id="amzStatus">' + (amzApi() ? 'Conectado: ' + esc(amzApi()) : 'Ainda não configurado — veja o GUIA-AMAZON.txt que veio no zip.') + '</p></div>' +
+    '<div class="card"><h2>Google Livros</h2>' +
+      '<p class="hint">Sem chave, o Google divide um limite de buscas com o mundo todo e às vezes responde “limite atingido”. Com a sua chave gratuita são ~1000 buscas por dia só suas. Passo a passo no LEIAME.txt.</p>' +
+      '<div class="field"><label for="prefGb">Chave da API do Google Livros (opcional)</label><input id="prefGb" data-change="gbkey" autocomplete="off" spellcheck="false" placeholder="AIza…" value="' + esc(S.settings.gbKey || '') + '"></div></div>' +
     '<div class="card"><h2>Preferências</h2>' +
       '<div class="field"><label for="prefName">Nome na saudação</label><input id="prefName" data-change="name" maxlength="40" value="' + esc(S.settings.name || '') + '" placeholder="Professor Robert"></div>' +
       '<div class="field"><label for="paceBasis">Como calcular o ritmo</label><select id="paceBasis" data-change="basis">' +
@@ -1615,6 +1630,9 @@ document.addEventListener('change', (e) => {
     const info = pomoInfo();
     if (info && info.el < info.tot) S.timer.pomoDone = false;
     save(); renderRead();
+  } else if (kind === 'gbkey') {
+    S.settings.gbKey = String(e.target.value || '').trim(); gPausedUntil = 0; save();
+    toast(S.settings.gbKey ? 'Chave do Google salva.' : 'Chave do Google removida.');
   } else if (kind === 'fx') {
     S.settings.fx = !!e.target.checked; applyFx(); save();
   } else if (kind === 'name') {

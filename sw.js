@@ -3,7 +3,7 @@
  * Requisições para outros domínios (Google Livros, Open Library, capas) vão direto à rede.
  * Para publicar uma nova versão, altere VERSION.
  */
-const VERSION = 'v2.5.1';
+const VERSION = 'v2.6.1';
 const CACHE = 'cronoleitura-' + VERSION;
 const COVERS = 'cronoleitura-capas'; // capas de outros sites (mantido entre versões)
 const ASSETS = [
@@ -12,11 +12,11 @@ const ASSETS = [
   './style.css',
   './app.js',
   './manifest.json',
-  './icons/icon.svg',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
-  './icons/icon-maskable-512.png',
-  './icons/apple-touch-icon.png'
+  './icon.svg',
+  './icon-192.png',
+  './icon-512.png',
+  './icon-maskable-512.png',
+  './apple-touch-icon.png'
 ];
 
 self.addEventListener('install', (event) => {
