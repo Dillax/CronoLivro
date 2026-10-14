@@ -54,7 +54,7 @@ function idleTimer() {
   return { status: 'idle', bookId: null, sessionId: null, runStart: null, activeMs: 0, lastLapMs: 0, carryMs: 0, flushedMs: 0, startPage: 1, pomoStartMs: 0, pomoDone: false };
 }
 function defaults() {
-  return { v: 2, activeBookId: null, settings: { paceBasis: 'all', keepAwake: true, pomoMin: 25, name: 'Professor Robert', fx: true, amazonApi: '' }, books: [], daily: {}, timer: idleTimer() };
+  return { v: 2, activeBookId: null, settings: { paceBasis: 'all', keepAwake: true, pomoMin: 25, name: 'Professor Robert', fx: true, amazonApi: '', goal: { period: 'week', unit: 'min', value: 210 } }, books: [], daily: {}, log: [], timer: idleTimer() };
 }
 function newBook(o) {
   const total = Math.max(1, Math.round(+o.totalPages) || 1);
@@ -85,6 +85,8 @@ function normalize(p) {
   s.settings = Object.assign(defaults().settings, p.settings || {});
   s.timer = Object.assign(idleTimer(), p.timer || {});
   s.daily = p.daily || {};
+  s.log = Array.isArray(p.log) ? p.log : [];
+  if (!s.settings.goal || !s.settings.goal.period) s.settings.goal = defaults().settings.goal;
   s.books = (p.books || []).map((b) => Object.assign(newBook(b), b, { segments: b.segments || [], daily: b.daily || {}, timeSec: b.timeSec || 0 }));
   if (!s.books.some((b) => b.id === s.activeBookId)) s.activeBookId = s.books[0] ? s.books[0].id : null;
   if (s.timer.status !== 'idle' && !s.books.some((b) => b.id === s.timer.bookId)) s.timer = idleTimer();
@@ -185,7 +187,7 @@ function startReading() {
     return;
   } else {
     S.timer = Object.assign(idleTimer(), {
-      status: 'running', bookId: b.id, sessionId: uid('s'), runStart: Date.now(),
+      status: 'running', bookId: b.id, sessionId: uid('s'), runStart: Date.now(), startedAt: Date.now(),
       carryMs: (b.carrySec || 0) * 1000, startPage: b.currentPage
     });
   }
@@ -214,6 +216,11 @@ function endSession(finishedBook) {
   const pages = b ? b.segments.filter((g) => g.sessionId === t.sessionId).reduce((a, g) => a + g.pages, 0) : 0;
   flush();
   if (b) b.carrySec = finishedBook ? 0 : Math.round(carry * 10) / 10;
+  if (b && totalSec >= 5) {
+    // registro da sessão para o monitor de hábitos (início, fim, tempo ativo, páginas, livro)
+    S.log.push({ id: t.sessionId, bookId: b.id, start: t.startedAt || Date.now() - totalSec * 1000, end: Date.now(), sec: Math.round(totalSec), pages });
+    if (S.log.length > 6000) S.log.splice(0, S.log.length - 6000);
+  }
   S.timer = idleTimer();
   releaseWake();
   save();
@@ -337,7 +344,7 @@ let ctx = { pace: null };
 let curTab = 'read';
 function showTab(name) {
   curTab = name;
-  ['read', 'books', 'stats'].forEach((t) => $('#view-' + t).classList.toggle('hidden', t !== name));
+  ['read', 'books', 'habits', 'stats'].forEach((t) => $('#view-' + t).classList.toggle('hidden', t !== name));
   $$('.tabbar button').forEach((b) => (b.dataset.tab === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
   renderCurrent();
   window.scrollTo(0, 0);
@@ -345,6 +352,7 @@ function showTab(name) {
 function renderCurrent() {
   if (curTab === 'read') renderRead();
   else if (curTab === 'books') renderBooks();
+  else if (curTab === 'habits') renderHabits();
   else renderStats();
 }
 function setActive(id) {
@@ -580,7 +588,7 @@ function greetingHtml() {
   const name = String(S.settings.name || '').trim();
   const todayMin = Math.floor(((S.daily[dateKey()] || 0) + unflushedSec()) / 60);
   return '<div class="hello"><h1 class="hello-title"><span class="led-text">Olá' + (name ? ', ' + esc(name) : '') + '</span></h1>' +
-    '<p>' + part + ' · hoje você já leu <b id="helloToday">' + todayMin + ' min</b></p></div>';
+    '<p>' + part + ' · hoje você já leu <b id="helloToday">' + todayMin + ' min</b></p>' + goalLineHtml() + '</div>';
 }
 
 /* ======================= busca online =======================
@@ -1372,6 +1380,324 @@ function deleteBook(id) {
   save(); closeDialog(); renderCurrent(); toast('Livro excluído.');
 }
 
+/* ======================= monitor de hábitos =======================
+ * Sessões: registro novo (S.log, com início e fim) + sessões antigas reconstruídas a partir
+ * das páginas cronometradas + a sessão em andamento. Tempo por dia vem de S.daily (inclui
+ * leitura sem virar página). Meta: diária, semanal, mensal ou anual, em minutos, páginas ou livros.
+ */
+const WD = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+const MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const startOfWeek = (d) => { const x = startOfDay(d); x.setDate(x.getDate() - x.getDay()); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const fmtMin = (sec) => { const m = Math.round(sec / 60); return m >= 60 ? Math.floor(m / 60) + ' h ' + pad(m % 60) : m + ' min'; };
+const hhmm = (ts) => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const daySec = (k) => (S.daily[k] || 0) + (k === dateKey() ? unflushedSec() : 0);
+const hab = { range: '30', month: null, day: null };
+
+function allSessions() {
+  const out = [];
+  const seen = new Set();
+  (S.log || []).forEach((l) => { seen.add(l.id); out.push(Object.assign({}, l)); });
+  S.books.forEach((b) => {
+    const m = new Map();
+    b.segments.forEach((g) => {
+      if (seen.has(g.sessionId)) return;
+      let x = m.get(g.sessionId);
+      if (!x) { x = { id: g.sessionId, bookId: b.id, start: Infinity, end: 0, sec: 0, pages: 0 }; m.set(g.sessionId, x); }
+      x.start = Math.min(x.start, g.ts - g.sec * 1000);
+      x.end = Math.max(x.end, g.ts);
+      x.sec += g.sec;
+      x.pages += g.pages;
+    });
+    m.forEach((x) => out.push(x));
+  });
+  const t = S.timer;
+  if (t.status !== 'idle') {
+    const i = out.findIndex((x) => x.id === t.sessionId);
+    if (i >= 0) out.splice(i, 1);
+    const b = bookById(t.bookId);
+    const secNow = activeNow() / 1000;
+    out.push({ id: t.sessionId, bookId: t.bookId, start: t.startedAt || Date.now() - secNow * 1000, end: Date.now(), sec: secNow,
+      pages: b ? b.segments.filter((g) => g.sessionId === t.sessionId).reduce((a, g) => a + g.pages, 0) : 0, live: true });
+  }
+  return out.filter((x) => x.sec > 0 && isFinite(x.start)).sort((a, b) => a.start - b.start);
+}
+function pagesBetween(a, b) {
+  return allSessions().reduce((p, x) => p + (x.start >= +a && x.start < +b ? x.pages : 0), 0);
+}
+function secBetween(a, b) {
+  let s2 = 0;
+  for (let d = startOfDay(a); d < b; d = addDays(d, 1)) s2 += daySec(dateKey(d));
+  return s2;
+}
+function periodRange(period, now) {
+  now = now || new Date();
+  let a;
+  let b;
+  if (period === 'day') { a = startOfDay(now); b = addDays(a, 1); }
+  else if (period === 'week') { a = startOfWeek(now); b = addDays(a, 7); }
+  else if (period === 'month') { a = new Date(now.getFullYear(), now.getMonth(), 1); b = new Date(now.getFullYear(), now.getMonth() + 1, 1); }
+  else { a = new Date(now.getFullYear(), 0, 1); b = new Date(now.getFullYear() + 1, 0, 1); }
+  return [a, b];
+}
+const GOAL_P = { day: 'Diária', week: 'Semanal', month: 'Mensal', year: 'Anual' };
+const GOAL_P_NOUN = { day: 'hoje', week: 'nesta semana', month: 'neste mês', year: 'neste ano' };
+const GOAL_U = { min: 'minutos', pages: 'páginas', books: 'livros' };
+function defaultGoal(period, unit) {
+  const t = { min: { day: 30, week: 210, month: 900, year: 10000 }, pages: { day: 20, week: 140, month: 600, year: 7000 }, books: { day: 1, week: 1, month: 2, year: 24 } };
+  return t[unit][period];
+}
+function goalProgress() {
+  const g = S.settings.goal;
+  const [a, b] = periodRange(g.period);
+  let done;
+  if (g.unit === 'min') done = secBetween(a, b) / 60;
+  else if (g.unit === 'pages') done = pagesBetween(a, b);
+  else done = S.books.filter((bk) => bk.finished && bk.finishedAt >= +a && bk.finishedAt < +b).length;
+  return { g, done, pct: clamp(done / Math.max(1, g.value), 0, 1) };
+}
+function goalLineHtml() {
+  const { g, done, pct } = goalProgress();
+  return '<p class="goal-line">Meta ' + GOAL_P[g.period].toLowerCase() + ': <b>' + nfmt(Math.floor(done)) + ' / ' + nfmt(g.value) + ' ' + GOAL_U[g.unit] + '</b>' +
+    (pct >= 1 ? ' · <span class="ok-text">cumprida!</span>' : '') + '</p>';
+}
+function streaks() {
+  const keys = Object.keys(S.daily).filter((k) => daySec(k) >= 60).sort();
+  const set = new Set(keys);
+  if (daySec(dateKey()) >= 60) set.add(dateKey());
+  let cur = 0;
+  let d = new Date();
+  if (!set.has(dateKey(d))) d = addDays(d, -1);
+  while (set.has(dateKey(d))) { cur++; d = addDays(d, -1); }
+  let best = 0;
+  let run = 0;
+  let prev = null;
+  Array.from(set).sort().forEach((k) => {
+    const dt = new Date(k + 'T12:00:00');
+    run = prev && Math.round((dt - prev) / DAYMS) === 1 ? run + 1 : 1;
+    best = Math.max(best, run);
+    prev = dt;
+  });
+  return { cur, best };
+}
+const DAYMS = 86400000;
+function rangeStart() {
+  if (hab.range === 'all') return new Date(0);
+  return startOfDay(addDays(new Date(), -(+hab.range - 1)));
+}
+
+/* ---------- gráficos (barras em HTML; tendência em SVG) ---------- */
+function barsHtml(items, opts) {
+  const max = Math.max(opts.min || 1, ...items.map((x) => x.v));
+  return '<div class="hbars' + (opts.cls ? ' ' + opts.cls : '') + '" role="img" aria-label="' + esc(opts.label) + '">' +
+    items.map((x) => {
+      const h = x.v > 0 ? Math.max(4, Math.round((x.v / max) * 100)) : 0;
+      return '<div class="hcol' + (x.hl ? ' hl' : '') + '" data-tip="' + esc(x.tip) + '" tabindex="0">' +
+        (opts.values && x.v > 0 ? '<span class="hval">' + esc(x.vl) + '</span>' : '') +
+        '<div class="hbar' + (x.v > 0 ? '' : ' zero') + '" style="height:' + (x.v > 0 ? h + '%' : '3px') + '"></div>' +
+        '<span class="hlab">' + esc(x.l) + '</span></div>';
+    }).join('') + (opts.goal ? '<div class="hgoal" style="bottom:calc(' + clamp((opts.goal / max) * 100, 0, 100) + '% * var(--plot) + var(--lab))" data-tip="Meta ' + esc(opts.goalTip || '') + '"></div>' : '') + '</div>';
+}
+function trendSvg(vals, labels) {
+  const W = 320;
+  const H = 120;
+  const P = 6;
+  const n = vals.length;
+  const max = Math.max(1, ...vals);
+  const x = (i) => P + (i * (W - 2 * P)) / Math.max(1, n - 1);
+  const y = (v) => H - P - (v / max) * (H - 2 * P);
+  const mx = (n - 1) / 2;
+  const my = vals.reduce((a, v) => a + v, 0) / n;
+  let num = 0;
+  let den = 0;
+  vals.forEach((v, i) => { num += (i - mx) * (v - my); den += (i - mx) * (i - mx); });
+  const slope = den ? num / den : 0;
+  const a0 = my - slope * mx;
+  const pts = vals.map((v, i) => x(i).toFixed(1) + ',' + y(v).toFixed(1)).join(' ');
+  const area = 'M' + x(0) + ',' + (H - P) + ' L' + pts.split(' ').join(' L') + ' L' + x(n - 1) + ',' + (H - P) + ' Z';
+  const dots = vals.map((v, i) => '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(v).toFixed(1) + '" r="4" class="tdot"><title>' + esc(labels[i] + ': ' + Math.round(v) + ' min') + '</title></circle>' +
+    '<rect x="' + (x(i) - (W / n) / 2).toFixed(1) + '" y="0" width="' + (W / n).toFixed(1) + '" height="' + H + '" fill="transparent" data-tip="' + esc(labels[i] + ': ' + Math.round(v) + ' min') + '"></rect>').join('');
+  return {
+    slope,
+    svg: '<svg class="trend" viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" aria-label="Minutos por semana nas últimas ' + n + ' semanas">' +
+      '<line x1="' + P + '" y1="' + (H - P) + '" x2="' + (W - P) + '" y2="' + (H - P) + '" class="taxis"/>' +
+      '<path d="' + area + '" class="tarea"/>' +
+      '<polyline points="' + pts + '" class="tline"/>' +
+      '<line x1="' + x(0) + '" y1="' + y(Math.max(0, a0)).toFixed(1) + '" x2="' + x(n - 1) + '" y2="' + y(Math.max(0, a0 + slope * (n - 1))).toFixed(1) + '" class="tfit"/>' +
+      dots + '</svg>'
+  };
+}
+
+function renderHabits() {
+  const el = $('#view-habits');
+  const now = new Date();
+  const sessions = allSessions();
+  const { g, done, pct } = goalProgress();
+  const st = streaks();
+
+  // ---- meta
+  const seg = (act, cur, opts) => '<div class="seg seg-sm">' + Object.keys(opts).map((k) =>
+    '<button type="button" data-act="' + act + '" data-v="' + k + '" aria-selected="' + (k === cur) + '">' + esc(opts[k]) + '</button>').join('') + '</div>';
+  const goalCard = '<div class="card"><h2>Meta de leitura</h2>' +
+    '<div class="goal-hero"><div class="goal-num"><strong>' + nfmt(Math.floor(done)) + '</strong><span>de ' + nfmt(g.value) + ' ' + GOAL_U[g.unit] + ' ' + GOAL_P_NOUN[g.period] + '</span></div>' +
+    '<div class="goal-pct' + (pct >= 1 ? ' done' : '') + '">' + Math.round(pct * 100) + '%</div></div>' +
+    '<div class="progress goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct * 100) + '"><div style="width:' + (pct * 100).toFixed(1) + '%"></div></div>' +
+    '<p class="note">' + (pct >= 1 ? 'Meta cumprida! 🎉' : 'Faltam ' + nfmt(Math.ceil(g.value - done)) + ' ' + GOAL_U[g.unit] + '.') + '</p>' +
+    '<div class="streaks"><div class="metric"><span class="m-label">Sequência atual</span><strong>' + st.cur + (st.cur === 1 ? ' dia' : ' dias') + '</strong></div>' +
+    '<div class="metric"><span class="m-label">Melhor sequência</span><strong>' + st.best + (st.best === 1 ? ' dia' : ' dias') + '</strong></div></div>' +
+    '<details class="goal-edit"><summary>Alterar meta</summary>' +
+      '<label>Período</label>' + seg('goalPeriod', g.period, GOAL_P) +
+      '<label>Medida</label>' + seg('goalUnit', g.unit, { min: 'Minutos', pages: 'Páginas', books: 'Livros' }) +
+      '<label for="goalVal">Quantidade</label><div class="stepper"><button class="btn" type="button" data-act="goalStep" data-v="-1" aria-label="Diminuir">−</button>' +
+      '<input id="goalVal" type="number" inputmode="numeric" min="1" value="' + g.value + '" data-change="goalValue"><button class="btn" type="button" data-act="goalStep" data-v="1" aria-label="Aumentar">+</button></div>' +
+    '</details></div>';
+
+  // ---- semana atual
+  const w0 = startOfWeek(now);
+  const weekItems = [];
+  let daysRead = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = addDays(w0, i);
+    const k = dateKey(d);
+    const sec = daySec(k);
+    if (sec >= 60) daysRead++;
+    const nS = sessions.filter((x) => dateKey(new Date(x.start)) === k).length;
+    weekItems.push({ v: sec / 60, vl: Math.round(sec / 60) + '', l: WD[i], hl: k === dateKey(),
+      tip: WD[i] + ' ' + d.getDate() + '/' + (d.getMonth() + 1) + ': ' + fmtMin(sec) + ' · ' + nS + (nS === 1 ? ' sessão' : ' sessões') });
+  }
+  const lastWeekSec = secBetween(addDays(w0, -7), w0);
+  const thisWeekSec = secBetween(w0, addDays(w0, 7));
+  const dailyGoalMin = g.unit === 'min' && g.period === 'day' ? g.value : 0;
+  const weekCard = '<div class="card"><h2>Esta semana</h2>' +
+    '<div class="week-head"><div><strong class="big">' + daysRead + '</strong> de 7 dias com leitura</div>' +
+    '<div class="muted">' + fmtMin(thisWeekSec) + ' · semana passada ' + fmtMin(lastWeekSec) + '</div></div>' +
+    barsHtml(weekItems, { label: 'Minutos lidos por dia nesta semana', values: true, min: 10, goal: dailyGoalMin, goalTip: dailyGoalMin + ' min/dia' }) +
+    '<p class="note">Toque numa barra para ver o tempo e quantas vezes leu no dia. Valores em minutos.</p></div>';
+
+  // ---- calendário
+  if (!hab.month) hab.month = new Date(now.getFullYear(), now.getMonth(), 1);
+  const m0 = hab.month;
+  const first = m0.getDay();
+  const nDays = new Date(m0.getFullYear(), m0.getMonth() + 1, 0).getDate();
+  let cells = WD.map((w) => '<span class="cal-wd">' + w.charAt(0).toUpperCase() + '</span>').join('');
+  for (let i = 0; i < first; i++) cells += '<span class="cal-blank"></span>';
+  let monthSec = 0;
+  let monthDays = 0;
+  for (let dn = 1; dn <= nDays; dn++) {
+    const d = new Date(m0.getFullYear(), m0.getMonth(), dn);
+    const k = dateKey(d);
+    const sec = daySec(k);
+    monthSec += sec;
+    if (sec >= 60) monthDays++;
+    const min = sec / 60;
+    const lvl = min < 1 ? 0 : min < 10 ? 1 : min < 30 ? 2 : min < 60 ? 3 : 4;
+    cells += '<button type="button" class="cal-day l' + lvl + (k === dateKey() ? ' today' : '') + (hab.day === k ? ' sel' : '') + '" data-act="calDay" data-k="' + k + '" aria-label="' + dn + ' de ' + MONTHS[d.getMonth()] + ': ' + fmtMin(sec) + '">' + dn + '</button>';
+  }
+  let detail = '';
+  if (hab.day) {
+    const ds = sessions.filter((x) => dateKey(new Date(x.start)) === hab.day);
+    const dd = new Date(hab.day + 'T12:00:00');
+    detail = '<div class="day-detail"><h3>' + esc(fmtDate(dd)) + '</h3><p class="muted">' + fmtMin(daySec(hab.day)) + ' de leitura · ' + ds.length + (ds.length === 1 ? ' sessão' : ' sessões') +
+      ' · ' + nfmt(ds.reduce((a, x) => a + x.pages, 0)) + ' págs.</p>' +
+      (ds.length ? ds.map((x) => { const b = bookById(x.bookId); return '<div class="session"><div class="s-main"><div class="s-title">' + esc(b ? b.title : 'Livro removido') + '</div>' +
+        '<div class="s-sub">' + hhmm(x.start) + '–' + hhmm(x.end) + (x.live ? ' (agora)' : '') + ' · ' + fmtMin(x.sec) + ' · ' + nfmt(x.pages) + ' págs.</div></div></div>'; }).join('')
+        : '<p class="note">Sem sessões registradas neste dia.</p>') + '</div>';
+  }
+  const calCard = '<div class="card"><div class="cal-head"><button class="btn sm ghost" type="button" data-act="calNav" data-v="-1" aria-label="Mês anterior">‹</button>' +
+    '<h2>' + MONTHS[m0.getMonth()].replace(/^./, (c) => c.toUpperCase()) + ' ' + m0.getFullYear() + '</h2>' +
+    '<button class="btn sm ghost" type="button" data-act="calNav" data-v="1" aria-label="Próximo mês">›</button></div>' +
+    '<p class="muted cal-sum">' + monthDays + ' dias com leitura · ' + fmtMin(monthSec) + '</p>' +
+    '<div class="cal">' + cells + '</div>' +
+    '<div class="cal-legend"><span>menos</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>mais</span><span class="muted">(1 · 10 · 30 · 60+ min)</span></div>' +
+    detail + '</div>';
+
+  // ---- período (filtro) + resumo + horários + livros
+  const r0 = rangeStart();
+  const rs = sessions.filter((x) => x.start >= +r0);
+  const rSec = secBetween(r0 < new Date(2000, 0, 1) ? (Object.keys(S.daily).sort()[0] ? new Date(Object.keys(S.daily).sort()[0] + 'T00:00:00') : now) : r0, addDays(startOfDay(now), 1));
+  const rPages = pagesBetween(r0, Date.now() + 1);
+  const rDays = new Set(Object.keys(S.daily).filter((k) => new Date(k + 'T12:00:00') >= r0 && daySec(k) >= 60)).size;
+  const filter = '<div class="seg range-seg" role="tablist" aria-label="Período">' + [['7', '7 dias'], ['30', '30 dias'], ['365', '12 meses'], ['all', 'Tudo']].map(([k, l]) =>
+    '<button type="button" data-act="habRange" data-v="' + k + '" aria-selected="' + (hab.range === k) + '">' + l + '</button>').join('') + '</div>';
+  const summary = '<div class="card"><h2>Resumo do período</h2><div class="metrics">' +
+    '<div class="metric"><span class="m-label">Tempo lendo</span><strong>' + fmtMin(rSec) + '</strong></div>' +
+    '<div class="metric"><span class="m-label">Páginas</span><strong>' + nfmt(rPages) + '</strong></div>' +
+    '<div class="metric"><span class="m-label">Dias com leitura</span><strong>' + rDays + '</strong></div>' +
+    '<div class="metric"><span class="m-label">Sessões</span><strong>' + rs.length + '</strong><span class="m-sub">' + (rs.length ? 'média ' + fmtMin(rs.reduce((a, x) => a + x.sec, 0) / rs.length) : '') + '</span></div>' +
+    '</div></div>';
+
+  const hours = new Array(24).fill(0);
+  rs.forEach((x) => {
+    let t0 = x.start;
+    let left = x.sec * 1000;
+    while (left > 0) {
+      const d = new Date(t0);
+      const toNext = 3600000 - ((d.getMinutes() * 60 + d.getSeconds()) * 1000 + d.getMilliseconds());
+      const part = Math.min(left, toNext);
+      hours[d.getHours()] += part / 60000;
+      left -= part;
+      t0 += part;
+    }
+  });
+  const peak = hours.indexOf(Math.max(...hours));
+  const hourItems = hours.map((v, h) => ({ v, vl: '', l: h % 3 === 0 ? h + 'h' : '', hl: v > 0 && h === peak, tip: h + 'h–' + (h + 1) + 'h: ' + Math.round(v) + ' min' }));
+  const partOfDay = (h) => (h < 6 ? 'de madrugada' : h < 12 ? 'de manhã' : h < 18 ? 'à tarde' : 'à noite');
+  const hourCard = '<div class="card"><h2>Quando você lê</h2>' +
+    (rs.length ? '<p class="muted">Você lê mais <b class="hl-text">' + partOfDay(peak) + '</b>, principalmente entre <b class="hl-text">' + peak + 'h e ' + (peak + 1) + 'h</b>.</p>' : '<p class="muted">Ainda sem sessões neste período.</p>') +
+    barsHtml(hourItems, { label: 'Minutos lidos por hora do dia', cls: 'hours', min: 1 }) +
+    '<p class="note">Minutos lidos em cada hora do dia, somando o período escolhido.</p></div>';
+
+  const byBook = new Map();
+  rs.forEach((x) => { const o = byBook.get(x.bookId) || { sec: 0, pages: 0, n: 0 }; o.sec += x.sec; o.pages += x.pages; o.n++; byBook.set(x.bookId, o); });
+  const books = Array.from(byBook.entries()).sort((a, b) => b[1].sec - a[1].sec);
+  const bmax = books.length ? books[0][1].sec : 1;
+  const bookCard = '<div class="card"><h2>Livros no período</h2>' + (books.length ? books.map(([id, o]) => {
+    const b = bookById(id);
+    return '<div class="brow" data-tip="' + esc((b ? b.title : 'Livro removido') + ': ' + fmtMin(o.sec) + ', ' + o.pages + ' págs., ' + o.n + ' sessões') + '">' +
+      coverHtml(b ? coverSrc(b) : '', 'xs') +
+      '<div class="brow-main"><div class="brow-title">' + esc(b ? b.title : 'Livro removido') + '</div>' +
+      '<div class="brow-track"><div style="width:' + Math.max(3, (o.sec / bmax) * 100).toFixed(1) + '%"></div></div>' +
+      '<div class="brow-sub">' + fmtMin(o.sec) + ' · ' + nfmt(o.pages) + ' págs. · ' + o.n + (o.n === 1 ? ' sessão' : ' sessões') + '</div></div></div>';
+  }).join('') : '<p class="muted">Nenhum livro lido neste período.</p>') + '</div>';
+
+  // ---- tendência (12 semanas)
+  const weeks = [];
+  const wlabels = [];
+  for (let i = 11; i >= 0; i--) {
+    const a = addDays(w0, -7 * i);
+    weeks.push(secBetween(a, addDays(a, 7)) / 60);
+    wlabels.push('semana de ' + a.getDate() + '/' + (a.getMonth() + 1));
+  }
+  const tr = trendSvg(weeks, wlabels);
+  const trendTxt = Math.abs(tr.slope) < 1 ? 'estável' : (tr.slope > 0 ? 'subindo ' : 'caindo ') + Math.abs(Math.round(tr.slope)) + ' min por semana';
+  const trendCard = '<div class="card"><h2>Tendência</h2><p class="muted">Minutos por semana nas últimas 12 semanas · tendência: <b class="' + (tr.slope >= 1 ? 'ok-text' : tr.slope <= -1 ? 'warn-text' : 'hl-text') + '">' + trendTxt + '</b></p>' +
+    tr.svg + '<div class="trend-x"><span>' + esc(wlabels[0].replace('semana de ', '')) + '</span><span>esta semana</span></div>' +
+    '<div class="legend"><span><i class="lg-line"></i>minutos na semana</span><span><i class="lg-fit"></i>tendência (reta média)</span></div></div>';
+
+  el.innerHTML = goalCard + weekCard + calCard + '<div class="section-title">Período</div>' + filter + summary + hourCard + bookCard + trendCard;
+}
+
+/* dica (tooltip) para barras e pontos: passar o mouse ou tocar */
+const tipBox = document.createElement('div');
+tipBox.className = 'tip hidden';
+tipBox.setAttribute('role', 'tooltip');
+document.body.appendChild(tipBox);
+function showTip(el) {
+  tipBox.textContent = el.getAttribute('data-tip');
+  tipBox.classList.remove('hidden');
+  const r = el.getBoundingClientRect();
+  const tw = tipBox.offsetWidth;
+  tipBox.style.left = clamp(r.left + r.width / 2 - tw / 2, 8, window.innerWidth - tw - 8) + 'px';
+  tipBox.style.top = Math.max(8, r.top - tipBox.offsetHeight - 8) + 'px';
+}
+function keepGoalOpen() { const d = $('.goal-edit'); if (d) d.open = true; }
+const hideTip = () => tipBox.classList.add('hidden');
+document.addEventListener('pointerover', (e) => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el && e.pointerType === 'mouse') showTip(el); else if (e.pointerType === 'mouse') hideTip(); });
+document.addEventListener('click', (e) => { const el = e.target.closest && e.target.closest('[data-tip]'); if (el) showTip(el); else hideTip(); }, true);
+document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('[data-tip]')) showTip(e.target); });
+window.addEventListener('scroll', hideTip, { passive: true });
+
 /* ======================= tela: Histórico ======================= */
 function last7() {
   const out = [];
@@ -1534,6 +1860,12 @@ const handlers = {
   goalInc: () => adjustGoal(5),
   goalDec: () => adjustGoal(-5),
   manual: () => openBookDialog({}),
+  habRange: (el) => { hab.range = el.dataset.v; renderHabits(); },
+  calNav: (el) => { const m = hab.month; hab.month = new Date(m.getFullYear(), m.getMonth() + (+el.dataset.v), 1); hab.day = null; renderHabits(); },
+  calDay: (el) => { hab.day = hab.day === el.dataset.k ? null : el.dataset.k; renderHabits(); const d = $('.day-detail'); if (d) d.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); },
+  goalPeriod: (el) => { const g = S.settings.goal; g.period = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
+  goalUnit: (el) => { const g = S.settings.goal; g.unit = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
+  goalStep: (el) => { const g = S.settings.goal; const step = g.unit === 'books' ? 1 : g.period === 'year' ? 100 : g.period === 'month' ? 30 : g.period === 'week' ? 15 : 5; g.value = Math.max(1, g.value + step * (+el.dataset.v)); save(); renderHabits(); keepGoalOpen(); },
   coverSearch: () => openCoverSearch(),
   coverPick: (el) => pickCover(el.dataset.url),
   coverPhoto: () => pickCoverFile(),
@@ -1576,6 +1908,7 @@ const handlers = {
     const b = bookById(bid);
     if (!b || !confirm('Remover esta sessão do histórico e do cálculo de ritmo?')) return;
     b.segments = b.segments.filter((g) => g.sessionId !== sid);
+    S.log = S.log.filter((l) => l.id !== sid);
     save(); renderStats();
   },
   exportCsv, exportJson, importJson,
@@ -1630,6 +1963,8 @@ document.addEventListener('change', (e) => {
     const info = pomoInfo();
     if (info && info.el < info.tot) S.timer.pomoDone = false;
     save(); renderRead();
+  } else if (kind === 'goalValue') {
+    S.settings.goal.value = Math.max(1, parseInt(e.target.value, 10) || 1); save(); renderHabits(); keepGoalOpen();
   } else if (kind === 'gbkey') {
     S.settings.gbKey = String(e.target.value || '').trim(); gPausedUntil = 0; save();
     toast(S.settings.gbKey ? 'Chave do Google salva.' : 'Chave do Google removida.');

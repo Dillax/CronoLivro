@@ -1,4 +1,4 @@
-CronoLeitura v2.6 (PWA)
+CronoLeitura v2.7 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -48,6 +48,17 @@ CAPAS (sem servidor)
 
 DESEMPENHO
 - Se o celular ainda travar: Histórico > Preferências > desmarque "Efeitos de luz".
+
+HÁBITOS (aba "Hábitos")
+- Meta de leitura: diária, semanal, mensal ou anual, em minutos, páginas ou livros
+  (em "Alterar meta"). Mostra o progresso, sequência de dias seguidos e melhor sequência.
+- Esta semana: quantos dias leu (de 7) e minutos por dia; toque na barra para ver as sessões.
+- Calendário do mês: cor mais acesa = mais tempo lido. Toque no dia para ver horário de
+  início e fim de cada leitura, livro, tempo e páginas.
+- Período (7 dias, 30 dias, 12 meses, tudo): resumo, horários em que você mais lê e livros.
+- Tendência: minutos por semana nas últimas 12 semanas com a reta de tendência.
+- Leituras antigas entram pelo que foi cronometrado; a partir desta versão cada sessão
+  também guarda o horário exato de início e fim.
 
 POMODORO
 - Fica embutido no botão principal (Começar / Continuar / Cheguei na página).
