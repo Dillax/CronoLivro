@@ -1,0 +1,46 @@
+CONECTAR A AMAZON AO CRONOLEITURA (cerca de 5 minutos, grátis)
+
+O que é: um pequeno servidor seu, no Cloudflare, que lê a busca e a página do livro na
+Amazon Brasil e entrega os dados ao app (o navegador não deixa o app ler a Amazon direto).
+O plano gratuito do Cloudflare permite 100 mil acessos por dia; você vai usar algumas dezenas.
+
+1) CRIAR A CONTA
+   - Acesse https://dash.cloudflare.com/sign-up e crie a conta (e-mail + senha). Confirme o e-mail.
+
+2) CRIAR O WORKER
+   - No painel: menu "Compute (Workers)" > "Workers & Pages" > botão "Create".
+   - Escolha "Start with Hello World!" (ou "Create Worker").
+   - Nome: cronoleitura-amazon  >  "Deploy".
+
+3) COLAR O CÓDIGO
+   - Na tela do worker, clique em "Edit code".
+   - Apague todo o conteúdo do arquivo worker.js que aparece à esquerda.
+   - Abra o arquivo servidor-amazon/worker.js deste zip, copie TUDO e cole lá.
+   - Clique em "Deploy" (canto superior direito).
+
+4) COPIAR O ENDEREÇO
+   - O endereço aparece no topo, algo como:
+       https://cronoleitura-amazon.SEU-NOME.workers.dev
+   - Teste no navegador: abrir esse endereço deve mostrar {"ok":true,...}
+
+5) LIGAR NO APP
+   - CronoLeitura > Livros > aba "Amazon" > "Configurar servidor Amazon"
+     (ou Histórico > Amazon), cole o endereço e toque em "Testar e salvar".
+
+PRONTO. Na busca, a aba "Amazon" mostra as capas; tocar na capa importa capa, autor,
+editora, edição e número de páginas. Colar ou compartilhar um link da Amazon também importa.
+
+OPCIONAL — só o seu app pode usar o servidor
+   - No worker: Settings > Variables and Secrets > Add > nome ORIGIN, valor = endereço do seu
+     app sem barra no final (ex.: https://seuusuario.github.io) > Deploy.
+
+SE APARECER "bloqueio temporário"
+   - A Amazon às vezes pede verificação para acessos automáticos. Espere alguns minutos e
+     tente de novo; enquanto isso a aba "Google Livros e outros" continua funcionando.
+   - As buscas ficam guardadas por 6 h e os livros por 24 h no servidor, o que reduz bloqueios.
+
+AVISOS
+   - Ler a Amazon automaticamente vai contra as Condições de Uso da Amazon. Use para fins
+     pessoais e com pouco volume.
+   - Se a Amazon mudar o layout das páginas, algum campo pode vir vazio: o app avisa e você
+     completa à mão. Para atualizar o servidor, basta colar um worker.js novo e dar Deploy.

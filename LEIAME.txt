@@ -1,0 +1,49 @@
+CronoLeitura v2.5.1 (PWA)
+
+COMO PUBLICAR
+1. Envie o conteúdo desta pasta para o seu site (ex.: GitHub Pages), mantendo a
+   pasta "icons/" ao lado do index.html. A pasta "servidor-amazon/" NÃO precisa ir para o
+   site: ela vai para o Cloudflare (veja servidor-amazon/GUIA-AMAZON.txt).
+2. Abra pelo endereço https. O service worker só funciona em https (ou localhost).
+3. No celular: menu do navegador > "Instalar app" / "Adicionar à tela inicial".
+
+COMO ATUALIZAR UMA VERSÃO JÁ INSTALADA
+- Altere VERSION no começo do sw.js (ex.: 'v2.0.1'). O app avisa "Nova versão instalada".
+
+SEUS DADOS
+- Ficam só no aparelho (localStorage). Use Histórico > "Baixar backup (JSON)" de vez em quando.
+- Dados da versão 1 (chave cronoleitura_pwa_state_v1) são migrados automaticamente
+  na primeira abertura, se estiverem no mesmo endereço do site.
+
+BUSCA DE LIVROS (digite título em português, autor ou ISBN)
+- Fontes: Google Livros (filtrado para português + mais recentes), Open Library (edição em
+  português) e BrasilAPI/ISBN (base brasileira) para completar o nº de páginas.
+- Ordem: edição em português > ISBN brasileiro (978-85 / 978-65) > tem páginas > mais recente.
+  Edições da mesma obra ficam em "Outras edições"; títulos em outros idiomas ficam recolhidos.
+- O nº de páginas varia por edição: confira com o seu exemplar antes de salvar.
+- AMAZON (aba "Amazon"): mostra as capas da Amazon; tocar na capa importa capa, autor,
+  editora, edição e páginas. Precisa do seu servidor gratuito no Cloudflare:
+  siga servidor-amazon/GUIA-AMAZON.txt (≈ 5 min) e cole o endereço no app.
+- "Colar link da Amazon ou ISBN": com o servidor ligado, um link da Amazon (inclusive o curto
+  a.co/… do app da Amazon) importa o livro direto. Sem servidor, ISBN e links /dp/ ainda funcionam
+  pelas outras fontes.
+- Android com o app instalado: no app da Amazon toque em Compartilhar → CronoLeitura.
+  (Reinstale o app depois de publicar esta versão para ele aparecer nessa lista.)
+
+CAPAS (sem servidor)
+- No cadastro do livro: "Buscar capa" mostra capas de Amazon (pelo ISBN), Google Livros e Open
+  Library. Toque na certa: ela é reduzida e SALVA NO CELULAR (aparece offline e vai no backup).
+- "Foto / galeria": tire foto da capa ou escolha uma imagem (ex.: print da capa no Google).
+- Se um site não deixar copiar a imagem, o app guarda o link e mantém uma cópia em cache.
+
+DESEMPENHO
+- Se o celular ainda travar: Histórico > Preferências > desmarque "Efeitos de luz".
+
+POMODORO
+- Fica embutido no botão principal (Começar / Continuar / Cheguei na página).
+- Vermelho enquanto conta, verde ao terminar (com som e vibração). Conta só tempo de leitura:
+  pausar congela. Ao continuar depois de concluído, começa um novo ciclo.
+- Duração em "Pomodoro" (abaixo do botão), ou "Desligado".
+
+SAUDAÇÃO
+- "Olá, Professor Robert". O nome pode ser trocado em Histórico > Preferências.

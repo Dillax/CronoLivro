@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <meta name="color-scheme" content="dark" />
+  <meta name="description" content="Cronometre quanto tempo leva cada página, acompanhe seus livros e veja quando vai terminar." />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="CronoLeitura" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="style.css" />
+  <title>CronoLeitura</title>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <img src="icons/icon.svg" alt="" width="34" height="34" />
+      <span>CronoLeitura</span>
+    </div>
+    <div class="topbar-actions">
+      <button id="btnInstall" class="chip hidden" type="button" data-act="install">Instalar app</button>
+      <span id="net" class="net online" role="status">Online</span>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-read" class="view" aria-label="Ler"></section>
+    <section id="view-books" class="view hidden" aria-label="Livros"></section>
+    <section id="view-stats" class="view hidden" aria-label="Histórico"></section>
+  </main>
+
+  <nav class="tabbar" aria-label="Navegação principal">
+    <button type="button" data-act="tab" data-tab="read" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 2a8 8 0 1 1 0 16 8 8 0 0 1 0-16zm-1 3v6l4.5 2.7.8-1.3-3.8-2.2V7z"/></svg>
+      <span>Ler</span>
+    </button>
+    <button type="button" data-act="tab" data-tab="books">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6l8-1.5V19L3 20.5zM13 4.5L21 6v14.5L13 19z"/></svg>
+      <span>Livros</span>
+    </button>
+    <button type="button" data-act="tab" data-tab="stats">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9h3v10H5zm5.5-5h3v15h-3zM16 13h3v6h-3z"/></svg>
+      <span>Histórico</span>
+    </button>
+  </nav>
+
+  <dialog id="dlg" aria-labelledby="dlgTitle"></dialog>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
