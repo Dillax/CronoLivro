@@ -194,10 +194,12 @@ function startReading() {
   acquireWake();
   save();
   renderRead();
+  bell('start');
 }
 function pauseReading() {
   const t = S.timer;
   if (t.status !== 'running') return;
+  bell('pause');
   t.activeMs += Date.now() - t.runStart;
   t.runStart = null;
   t.status = 'paused';
@@ -228,6 +230,7 @@ function endSession(finishedBook) {
 }
 function stopReading() {
   if (S.timer.status === 'idle') return;
+  bell('stop');
   const r = endSession(false);
   renderRead();
   toast(r.pages > 0 ? 'Sessão encerrada: ' + nfmt(r.pages) + (r.pages === 1 ? ' página' : ' páginas') + ' em ' + fmtDur(r.totalSec) + '.' : 'Sessão encerrada.');
@@ -254,6 +257,7 @@ function lap() {
     b.finishedAt = Date.now();
     endSession(true);
     renderRead();
+    bell('stop');
     toast('Livro concluído! Tempo total: ' + fmtDur(b.timeSec) + '.');
     return;
   }
@@ -563,24 +567,53 @@ function unlockAudio() {
     if (audioCtx.state === 'suspended') audioCtx.resume();
   } catch (e) { audioCtx = null; }
 }
+/* ---------- sininho de meditação (sintetizado, sem arquivo de áudio) ----------
+ * Modelo de sino/rin: tons puros com razões não harmônicas (como em sinos e tigelas
+ * tibetanas), cada um em par levemente desafinado (o "batimento" que faz o som ondular),
+ * ataque rápido de baqueta e decaimento exponencial longo; parciais agudos somem antes.
+ */
+const BELL_PARTIALS = [[1, 1, 7.5], [2.756, 0.45, 5], [5.404, 0.22, 3.2], [8.933, 0.11, 1.9], [13.34, 0.05, 1.1]]; // razão, amplitude, decaimento (s)
+const BELLS = {
+  start: { strikes: 1, base: 660, vol: 0.32, gap: 0 },       // começar / continuar
+  pause: { strikes: 1, base: 523, vol: 0.20, gap: 0 },       // pausar: mais grave e suave
+  stop: { strikes: 2, base: 587, vol: 0.28, gap: 1.6 },      // encerrar / terminar o livro
+  pomo: { strikes: 3, base: 660, vol: 0.34, gap: 2.4 }       // fim do pomodoro: três batidas
+};
+function bellInto(ctx, dest, kind, when) {
+  const b = BELLS[kind] || BELLS.start;
+  const master = ctx.createGain();
+  master.gain.value = b.vol;
+  master.connect(dest);
+  for (let k = 0; k < b.strikes; k++) {
+    const ts = when + k * b.gap;
+    const soft = k > 0 ? 0.85 : 1;
+    BELL_PARTIALS.forEach(([r, a, d]) => {
+      [0, 1].forEach((j) => {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.type = 'sine';
+        o.frequency.value = b.base * r * (j ? 1.0035 : 1); // par desafinado = ondulação do sino
+        const peak = Math.max(0.0002, a * 0.5 * soft);
+        g.gain.setValueAtTime(0.0001, ts);
+        g.gain.exponentialRampToValueAtTime(peak, ts + 0.006);
+        g.gain.exponentialRampToValueAtTime(0.0001, ts + d);
+        o.connect(g).connect(master);
+        o.start(ts);
+        o.stop(ts + d + 0.05);
+      });
+    });
+  }
+  return (b.strikes - 1) * b.gap + BELL_PARTIALS[0][2];
+}
+function bell(kind) {
+  if (S.settings.sound === false) return;
+  unlockAudio();
+  if (!audioCtx) return;
+  try { bellInto(audioCtx, audioCtx.destination, kind, audioCtx.currentTime + 0.03); } catch (e) { /* sem som */ }
+}
 function pomoAlarm() {
   try { if (navigator.vibrate) navigator.vibrate([220, 120, 220, 120, 480]); } catch (e) { /* opcional */ }
-  if (!audioCtx) return;
-  try {
-    const t0 = audioCtx.currentTime;
-    [0, 0.28, 0.56].forEach((d, i) => {
-      const o = audioCtx.createOscillator();
-      const g = audioCtx.createGain();
-      o.type = 'sine';
-      o.frequency.value = i === 2 ? 1175 : 880;
-      g.gain.setValueAtTime(0.0001, t0 + d);
-      g.gain.exponentialRampToValueAtTime(0.25, t0 + d + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.24);
-      o.connect(g).connect(audioCtx.destination);
-      o.start(t0 + d);
-      o.stop(t0 + d + 0.26);
-    });
-  } catch (e) { /* sem som */ }
+  bell('pomo');
 }
 function greetingHtml() {
   const h = new Date().getHours();
@@ -1762,6 +1795,8 @@ function renderStats() {
         '<option value="all"' + (S.settings.paceBasis === 'all' ? ' selected' : '') + '>Todo o histórico do livro</option>' +
         '<option value="recent"' + (S.settings.paceBasis === 'recent' ? ' selected' : '') + '>Últimas ~30 páginas (ritmo recente)</option></select></div>' +
       '<div class="check field"><input type="checkbox" id="fxOn" data-change="fx"' + (S.settings.fx !== false ? ' checked' : '') + '><label for="fxOn">Efeitos de luz (LED em movimento). Desligue se o celular travar</label></div>' +
+      '<div class="check field"><input type="checkbox" id="soundOn" data-change="sound"' + (S.settings.sound !== false ? ' checked' : '') + '><label for="soundOn">Sininho ao começar, pausar, encerrar e no fim do pomodoro</label></div>' +
+      '<div class="btn-row field"><button class="btn sm" type="button" data-act="bellTest" data-v="start">Ouvir: começar</button><button class="btn sm" type="button" data-act="bellTest" data-v="pomo">Ouvir: fim do pomodoro</button></div>' +
       '<div class="check field"><input type="checkbox" id="keepAwake" data-change="awake"' + (S.settings.keepAwake ? ' checked' : '') + '><label for="keepAwake">Manter a tela acesa durante a leitura</label></div></div>' +
     '<div class="card"><h2>Seus dados</h2><p class="hint">Tudo fica salvo só neste aparelho. Faça backup de vez em quando.</p><div class="stack">' +
       '<button class="btn block" type="button" data-act="exportJson">Baixar backup (JSON)</button>' +
@@ -1860,6 +1895,7 @@ const handlers = {
   goalInc: () => adjustGoal(5),
   goalDec: () => adjustGoal(-5),
   manual: () => openBookDialog({}),
+  bellTest: (el) => { const was = S.settings.sound; S.settings.sound = true; bell(el.dataset.v); S.settings.sound = was; },
   habRange: (el) => { hab.range = el.dataset.v; renderHabits(); },
   calNav: (el) => { const m = hab.month; hab.month = new Date(m.getFullYear(), m.getMonth() + (+el.dataset.v), 1); hab.day = null; renderHabits(); },
   calDay: (el) => { hab.day = hab.day === el.dataset.k ? null : el.dataset.k; renderHabits(); const d = $('.day-detail'); if (d) d.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); },
@@ -1974,6 +2010,9 @@ document.addEventListener('change', (e) => {
     S.settings.name = String(e.target.value || '').trim().slice(0, 40); save();
   } else if (kind === 'basis') {
     S.settings.paceBasis = e.target.value === 'recent' ? 'recent' : 'all'; save(); renderStats();
+  } else if (kind === 'sound') {
+    S.settings.sound = !!e.target.checked; save();
+    if (S.settings.sound) bell('start');
   } else if (kind === 'awake') {
     S.settings.keepAwake = !!e.target.checked; save();
     if (!S.settings.keepAwake) releaseWake(); else if (S.timer.status === 'running') acquireWake();

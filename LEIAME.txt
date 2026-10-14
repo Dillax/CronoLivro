@@ -1,4 +1,4 @@
-CronoLeitura v2.7 (PWA)
+CronoLeitura v2.8 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -65,6 +65,12 @@ POMODORO
 - Vermelho enquanto conta, verde ao terminar (com som e vibração). Conta só tempo de leitura:
   pausar congela. Ao continuar depois de concluído, começa um novo ciclo.
 - Duração em "Pomodoro" (abaixo do botão), ou "Desligado".
+
+SININHO DE MEDITAÇÃO
+- Começar/continuar: 1 batida · Pausar: 1 batida suave · Encerrar ou terminar o livro: 2 batidas
+  · Fim do pomodoro: 3 batidas. Som sintetizado no próprio app (funciona offline).
+- Liga/desliga e botões para ouvir em Histórico > Preferências. O volume segue o do celular
+  (no modo silencioso o navegador pode não tocar).
 
 SAUDAÇÃO
 - "Olá, Professor Robert". O nome pode ser trocado em Histórico > Preferências.
