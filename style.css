@@ -626,6 +626,40 @@ input, select { background: rgba(0, 0, 0, 0.18); border-color: rgba(215, 242, 25
 /* dica */
 .tip { position: fixed; z-index: 70; max-width: 260px; padding: 7px 10px; border-radius: 10px; font-size: .78rem; color: var(--text); background: rgba(4, 14, 30, .96); border: 1px solid rgba(205, 238, 255, .3); box-shadow: 0 0 14px rgba(41, 170, 255, .3); pointer-events: none; }
 
+/* ======================================================================
+   POMODORO EM VIDRO: vermelho (contando) e verde (concluído) com a mesma
+   transparência dos outros botões. A cor fica no contorno, na luz central
+   dos lados, no texto e na barra de progresso; quase nada de preenchimento.
+   ====================================================================== */
+.btn.pomo[data-pomo="run"] {
+  --led: #ffd9df; --led-soft: rgba(255, 190, 200, 0.6); --led-glow: rgba(255, 120, 140, 0.95); --led-glow2: rgba(255, 40, 70, 0.75); --led-w: 2px;
+  color: #ffe8ec;
+  background:
+    linear-gradient(125deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 10%, rgba(255, 255, 255, 0) 18%),
+    rgba(255, 50, 80, 0.07);
+  border-color: rgba(255, 120, 140, 0.75);
+  text-shadow: 0 0 8px rgba(255, 70, 100, 0.95), 0 0 18px rgba(255, 40, 70, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 220, 228, 0.16), inset 0 0 6px rgba(255, 90, 115, 0.22), 0 0 16px rgba(255, 50, 80, 0.38);
+  filter: none;
+}
+.btn.pomo[data-pomo="run"] .pomo-fill {
+  background: linear-gradient(90deg, rgba(255, 60, 90, 0.02) 0%, rgba(255, 60, 90, 0.12) 94%, rgba(255, 150, 165, 0.9) 100%);
+}
+.btn.pomo[data-pomo="run"] .pomo-time { border-color: rgba(255, 120, 140, 0.6); background: rgba(255, 50, 80, 0.06); }
+.btn.pomo[data-pomo="run"] .tomato { background: #ff4d6a; box-shadow: 0 0 8px #ff4d6a; }
+.timer-card[data-state="paused"] .btn.pomo[data-pomo="run"] { filter: none; opacity: .85; }
+.btn.pomo[data-pomo="done"] {
+  --led: #dcfff2; --led-soft: rgba(180, 255, 225, 0.6); --led-glow: rgba(120, 255, 205, 0.95); --led-glow2: rgba(20, 230, 160, 0.75); --led-w: 2px;
+  color: #e6fff6;
+  background:
+    linear-gradient(125deg, rgba(255, 255, 255, 0.09) 0%, rgba(255, 255, 255, 0.025) 10%, rgba(255, 255, 255, 0) 18%),
+    rgba(20, 230, 160, 0.06);
+  border-color: rgba(120, 255, 205, 0.75);
+  text-shadow: 0 0 8px rgba(20, 230, 160, 0.95), 0 0 18px rgba(20, 230, 160, 0.5);
+  box-shadow: inset 0 1px 0 rgba(220, 255, 240, 0.16), inset 0 0 6px rgba(60, 240, 180, 0.22), 0 0 16px rgba(20, 230, 160, 0.38);
+}
+.btn.pomo[data-pomo="done"] .pomo-time { border-color: rgba(120, 255, 205, 0.6); background: rgba(20, 230, 160, 0.06); }
+
 /* "Efeitos de luz" desligado nas Preferências (celulares mais simples) */
 body.calm *, body.calm *::before, body.calm *::after { animation: none !important; }
 body.calm .topbar::after, body.calm .tabbar::before { display: none; }
