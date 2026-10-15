@@ -1,4 +1,4 @@
-CronoLeitura v2.9 (PWA)
+CronoLeitura v2.10 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -39,6 +39,10 @@ Sem chave, o Google divide um limite único entre todos os sites sem chave, e el
    adicione  https://dillax.github.io/*   > "Restrições de API": Books API > Salvar.
    (Assim a chave só funciona no seu site, mesmo ficando visível no código.)
 6. No app: Histórico > Google Livros > cole a chave. Sem cartão de crédito; ~1000 buscas/dia.
+
+BIBLIOTECA
+- Aba Livros > Minha biblioteca: escolha ☰ Lista ou ▦ Grade (o app lembra a escolha).
+  Na grade, toque na capa para ler; "Editar" abaixo de cada livro.
 
 CAPAS (sem servidor)
 - No cadastro do livro: "Buscar capa" mostra capas de Amazon (pelo ISBN), Google Livros e Open

@@ -1296,16 +1296,31 @@ function pickCoverFile() {
 /* ======================= tela: Livros ======================= */
 function renderBooks() {
   const el = $('#view-books');
+  const grid = S.settings.libView === 'grid';
   const items = S.books.map((b) => {
     const done = b.finished ? b.totalPages : b.currentPage - 1;
     const pct = clamp((done / b.totalPages) * 100, 0, 100);
+    const status = b.finished ? 'Concluído' : 'Pág. ' + b.currentPage + ' de ' + b.totalPages;
+    if (grid) {
+      return '<article class="book-tile' + (b.id === S.activeBookId ? ' active' : '') + '">' +
+        '<button type="button" class="tile-cover" data-act="read" data-id="' + esc(b.id) + '" aria-label="Ler ' + esc(b.title) + '">' + coverHtml(coverSrc(b), 'tile') +
+          (b.finished ? '<span class="tile-badge">✓</span>' : '') + '</button>' +
+        '<div class="tile-title">' + esc(b.title) + '</div>' +
+        '<div class="tile-meta"><span class="pg">' + pct.toFixed(0) + '%</span> · ' + esc(status) + '</div>' +
+        '<div class="progress sm"><div style="width:' + pct.toFixed(1) + '%"></div></div>' +
+        '<button type="button" class="tile-edit" data-act="edit" data-id="' + esc(b.id) + '" aria-label="Editar ' + esc(b.title) + '">Editar</button></article>';
+    }
     return '<article class="book-item' + (b.id === S.activeBookId ? ' active' : '') + '">' + coverHtml(coverSrc(b), 'sm') +
       '<div class="bi-info"><h3>' + esc(b.title) + '</h3><p>' + esc(b.author || 'Autor não informado') + '</p>' +
-      '<p><span class="pg">' + (b.finished ? 'Concluído' : 'Pág. ' + b.currentPage + ' de ' + b.totalPages) + '</span> · ' + pct.toFixed(0) + '%</p>' +
+      (edLine(b) ? '<p class="ed-meta">' + esc(edLine(b)) + '</p>' : '') +
+      '<p><span class="pg">' + status + '</span> · ' + pct.toFixed(0) + '%</p>' +
       '<div class="progress sm"><div style="width:' + pct.toFixed(1) + '%"></div></div></div>' +
       '<div class="bi-actions"><button class="btn sm primary" type="button" data-act="read" data-id="' + esc(b.id) + '">Ler</button>' +
       '<button class="btn sm" type="button" data-act="edit" data-id="' + esc(b.id) + '">Editar</button></div></article>';
   }).join('');
+  const viewSeg = '<div class="seg seg-sm lib-seg" role="tablist" aria-label="Visualização">' +
+    '<button type="button" data-act="libView" data-v="list" aria-selected="' + !grid + '">☰ Lista</button>' +
+    '<button type="button" data-act="libView" data-v="grid" aria-selected="' + grid + '">▦ Grade</button></div>';
   el.innerHTML =
     '<div class="card"><h2>Buscar livro na internet</h2>' +
       '<form class="searchbar" data-form="search"><input id="q" name="q" type="search" placeholder="Título, autor ou ISBN" autocomplete="off" enterkeyhint="search" value="' + esc(search.q) + '" aria-label="Buscar livro">' +
@@ -1318,8 +1333,8 @@ function renderBooks() {
       '<div id="amzResults"' + (srcTab === 'amazon' ? '' : ' hidden') + '>' + amzHtml() + '</div>' +
       '<div id="results" class="results"' + (srcTab === 'cat' ? '' : ' hidden') + '>' + resultsHtml(search, 'pick') + '</div>' +
       '<button class="btn ghost block" type="button" data-act="manual">Adicionar manualmente</button></div>' +
-    '<div class="section-title">Minha biblioteca (' + S.books.length + ')</div>' +
-    (items ? '<div class="stack">' + items + '</div>' : '<div class="card empty"><p>Sua biblioteca está vazia.</p></div>');
+    '<div class="lib-head"><div class="section-title">Minha biblioteca (' + S.books.length + ')</div>' + (S.books.length ? viewSeg : '') + '</div>' +
+    (items ? '<div class="' + (grid ? 'lib-grid' : 'stack') + '">' + items + '</div>' : '<div class="card empty"><p>Sua biblioteca está vazia.</p></div>');
 }
 function openBookDialog(prefill, editId) {
   const b = editId ? bookById(editId) : null;
@@ -1963,6 +1978,7 @@ const handlers = {
   goalPeriod: (el) => { const g = S.settings.goal; g.period = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
   goalUnit: (el) => { const g = S.settings.goal; g.unit = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
   goalStep: (el) => { const g = S.settings.goal; const step = g.unit === 'books' ? 1 : g.period === 'year' ? 100 : g.period === 'month' ? 30 : g.period === 'week' ? 15 : 5; g.value = Math.max(1, g.value + step * (+el.dataset.v)); save(); renderHabits(); keepGoalOpen(); },
+  libView: (el) => { S.settings.libView = el.dataset.v === 'grid' ? 'grid' : 'list'; save(); renderBooks(); const h = $('.lib-head'); if (h) h.scrollIntoView({ block: 'start' }); },
   coverSearch: () => openCoverSearch(),
   coverPick: (el) => pickCover(el.dataset.url),
   coverPhoto: () => pickCoverFile(),

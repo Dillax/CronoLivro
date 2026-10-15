@@ -254,10 +254,10 @@ input[type="checkbox"] { width: 22px; height: 22px; min-height: 0; accent-color:
 
 /* ---------- livro ativo ---------- */
 .book-hero { display: flex; gap: 14px; align-items: center; }
-.cover { flex: none; width: 64px; height: 92px; border-radius: 8px; overflow: hidden; background: rgba(41, 197, 255, 0.06); border: 1px solid var(--edge); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 12px rgba(41, 197, 255, 0.18); }
+.cover { flex: none; width: 96px; height: 140px; border-radius: 8px; overflow: hidden; background: rgba(41, 197, 255, 0.06); border: 1px solid var(--edge); display: flex; align-items: center; justify-content: center; box-shadow: 0 0 12px rgba(41, 197, 255, 0.18); }
 .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .cover svg { width: 28px; height: 28px; fill: var(--diamond-deep); }
-.cover.sm { width: 48px; height: 70px; }
+.cover.sm { width: 66px; height: 96px; }
 .hero-info { min-width: 0; flex: 1; }
 .hero-info h2 { font-size: 1.1rem; margin: 0 0 2px; overflow-wrap: anywhere; }
 .pageline { margin-top: 8px; font-size: .95rem; }
@@ -659,6 +659,36 @@ input, select { background: rgba(0, 0, 0, 0.18); border-color: rgba(215, 242, 25
   box-shadow: inset 0 1px 0 rgba(220, 255, 240, 0.16), inset 0 0 6px rgba(60, 240, 180, 0.22), 0 0 16px rgba(20, 230, 160, 0.38);
 }
 .btn.pomo[data-pomo="done"] .pomo-time { border-color: rgba(120, 255, 205, 0.6); background: rgba(20, 230, 160, 0.06); }
+
+/* ---------- capas maiores, cartões mais visíveis, biblioteca em grade ---------- */
+.book-hero { align-items: flex-start; }
+.book-hero .cover { box-shadow: 0 8px 22px rgba(0, 0, 0, .55), 0 0 16px rgba(41, 197, 255, .22); }
+.book-item { align-items: flex-start; }
+/* cartões: um pouco mais presentes, ainda límpidos (sem neblina) */
+.card {
+  background:
+    linear-gradient(125deg, rgba(255, 255, 255, 0.085) 0%, rgba(255, 255, 255, 0.03) 10%, rgba(255, 255, 255, 0) 18%),
+    rgba(110, 190, 255, 0.035);
+  border-color: rgba(215, 242, 255, 0.36);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 0 4px rgba(170, 230, 255, 0.14), 0 0 18px rgba(41, 160, 255, 0.16), 0 10px 26px rgba(0, 0, 0, 0.35);
+  --led-w: 2px; --led-glow2: rgba(41, 170, 255, 0.75);
+}
+.metric, .result, .book-item, .seg { border-color: rgba(215, 242, 255, 0.28); background: rgba(110, 190, 255, 0.03); }
+.lib-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 4px; }
+.lib-seg { width: 180px; margin: 0; }
+.lib-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 12px; }
+@media (min-width: 560px) { .lib-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.book-tile { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.tile-cover { position: relative; display: block; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 10px; }
+.cover.tile { width: 100%; height: auto; aspect-ratio: 2 / 3; border-radius: 10px; box-shadow: 0 8px 20px rgba(0, 0, 0, .55), 0 0 14px rgba(41, 197, 255, .2); }
+.cover.tile svg { width: 34px; height: 34px; }
+.book-tile.active .cover.tile { border-color: #fff; box-shadow: 0 0 0 2px var(--diamond), 0 0 18px rgba(41, 197, 255, .6); }
+.tile-cover:active .cover.tile { transform: scale(.97); }
+.tile-badge { position: absolute; top: 6px; right: 6px; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: .75rem; font-weight: 800; color: #00140c; background: #7dffcf; box-shadow: 0 0 10px rgba(20, 230, 160, .7); }
+.tile-title { font-size: .8rem; font-weight: 700; line-height: 1.25; min-height: 2.5em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.tile-meta { font-size: .7rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-meta .pg { color: var(--diamond-light); font-weight: 700; }
+.tile-edit { align-self: flex-start; font: inherit; font-size: .72rem; font-weight: 650; color: var(--diamond-light); background: none; border: 0; padding: 2px 0; cursor: pointer; }
 
 /* "Efeitos de luz" desligado nas Preferências (celulares mais simples) */
 body.calm *, body.calm *::before, body.calm *::after { animation: none !important; }
