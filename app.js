@@ -146,7 +146,7 @@ function save() {
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
 const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
 const anyById = (id) => bookById(id) || audioById(id);
-const APP_VERSION = '2.12.0';
+const APP_VERSION = '2.13.0';
 const DEVELOPER = 'Robert Simão dos Santos';
 const activeBook = () => bookById(S.activeBookId);
 
@@ -965,6 +965,14 @@ async function runSearch(q) {
 
 /* texto/link vindo da área de transferência ou de "Compartilhar": link/ISBN busca a edição exata; senão, busca pelo título */
 function useSharedText(text) {
+  const abUrl = ((String(text).match(/https?:\/\/[^\s<>"']+/i) || [''])[0]);
+  if (abUrl && isAudioLink(abUrl)) {
+    showTab('audio');
+    openAudioDialog();
+    const t = $('#f-link'); if (t) t.value = abUrl;
+    importAudioLink(abUrl);
+    return;
+  }
   const link = (String(text).match(/https?:\/\/(?:www\.)?(?:amazon\.com(?:\.br)?|a\.co|amzn\.to|amzn\.com)\/\S+/i) || [''])[0];
   if (link && amzApi()) {
     if (curTab !== 'books') showTab('books');
@@ -1895,7 +1903,7 @@ const listenNowMs = () => S.listen.accMs + (S.listen.status === 'running' ? Date
 function newAudio(o) {
   return {
     id: uid('a'), title: (o.title || 'Sem título').trim(), author: (o.author || '').trim(), narrator: (o.narrator || '').trim(),
-    publisher: (o.publisher || '').trim(), cover: safeUrl(o.cover), durationSec: Math.max(60, Math.round(+o.durationSec) || 3600),
+    publisher: (o.publisher || '').trim(), link: safeUrl(o.link), cover: safeUrl(o.cover), durationSec: Math.max(60, Math.round(+o.durationSec) || 3600),
     positionSec: Math.max(0, Math.round(+o.positionSec) || 0), speed: +o.speed || 1, dailyGoalMin: clamp(Math.round(+o.dailyGoalMin) || 30, 1, 720),
     finished: false, addedAt: Date.now()
   };
@@ -1932,6 +1940,7 @@ function renderAudio() {
       '<div class="ab-hero">' + coverHtml(coverSrc(a), 'sq') +
         '<div class="hero-info"><h2>' + esc(a.title) + '</h2><p class="muted">' + esc(a.author || 'Autor não informado') + '</p>' +
         (a.narrator ? '<p class="muted ed-line">Narração: ' + esc(a.narrator) + '</p>' : '') +
+        (a.link ? '<p class="ed-line"><a class="ab-page" href="' + esc(a.link) + '" target="_blank" rel="noopener noreferrer">Página no ' + esc(platformOf(a.link)) + ' ↗</a></p>' : '') +
         '<div class="pageline"><strong id="abPct">' + Math.floor(st.pct * 100) + '%</strong> ouvido</div></div></div>' +
       '<div class="progress" role="progressbar" aria-label="Progresso do audiobook" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.floor(st.pct * 100) + '"><div id="abBar" style="width:' + (st.pct * 100).toFixed(2) + '%"></div></div>' +
       '<div class="progress-meta"><span id="abPos">' + clockHms(st.pos) + '</span><span id="abDur">' + clockHms(a.durationSec) + '</span></div>' +
@@ -2088,6 +2097,11 @@ function openAudioDialog(editId) {
   openDialog('<div class="dlg-body"><h2 id="dlgTitle">' + (a ? 'Editar audiobook' : 'Adicionar audiobook') + '</h2>' +
     '<form data-form="audio" data-id="' + (a ? esc(a.id) : '') + '" novalidate>' +
       '<input type="hidden" name="isbn" value=""><input type="hidden" name="cover" value="' + esc(v.cover || '') + '">' +
+      '<div class="field ab-link"><label for="f-link">Importar da página do audiobook</label>' +
+        '<textarea id="f-link" name="link" rows="2" inputmode="url" autocomplete="off" spellcheck="false" placeholder="Cole o link do Audible, Storytel, Ubook, Google Play, Apple Books… (ou o texto da página)">' + esc(v.link || '') + '</textarea>' +
+        '<div class="btn-row ab-link-btns"><button type="button" class="btn sm" data-act="abPaste">' + ICON.paste + ' Colar</button>' +
+        '<button type="button" class="btn sm primary" data-act="abImport">' + ICON.search + ' Buscar dados</button></div>' +
+        '<p class="hint" id="abImpStatus">Preenche título, autor, narrador, duração, editora/plataforma e a capa da página.</p></div>' +
       '<div class="field"><label for="f-title">Título</label><input id="f-title" name="title" required value="' + esc(v.title || '') + '"></div>' +
       '<div class="field-row"><div class="field"><label for="f-author">Autor</label><input id="f-author" name="author" value="' + esc(v.author || '') + '"></div>' +
         '<div class="field"><label for="f-narr">Narrador</label><input id="f-narr" name="narrator" value="' + esc(v.narrator || '') + '"></div></div>' +
@@ -2135,7 +2149,8 @@ function submitAudio(f) {
   const pos = readProgress(fd, dur);
   if (Number.isNaN(pos)) { toast('Progresso inválido. Preencha horas, minutos e segundos, ou a %.'); return; }
   const id = f.dataset.id;
-  const fields = { title, author: String(fd.get('author') || '').trim(), narrator: String(fd.get('narrator') || '').trim(), publisher: String(fd.get('publisher') || '').trim(),
+  const link = safeUrl(((String(fd.get('link') || '').match(/https?:\/\/[^\s<>"']+/i) || [''])[0]).replace(/[)\].,;]+$/, ''));
+  const fields = { title, link, author: String(fd.get('author') || '').trim(), narrator: String(fd.get('narrator') || '').trim(), publisher: String(fd.get('publisher') || '').trim(),
     durationSec: Math.round(dur), dailyGoalMin: clamp(parseInt(fd.get('dailyGoalMin'), 10) || 30, 1, 720) };
   let a;
   if (id) {
@@ -2163,6 +2178,240 @@ function deleteAudio(id) {
   dropLocalCover(id);
   if (S.activeAudioId === id) S.activeAudioId = S.audio[0] ? S.audio[0].id : null;
   save(); closeDialog(); renderAudio(); toast('Audiobook excluído.');
+}
+
+/* ======================= importar audiobook pela página (link) =======================
+ * O navegador não pode ler páginas de outros sites direto (CORS). Sem servidor próprio, o app
+ * pede a página a leitores públicos gratuitos, em paralelo, e usa a primeira resposta boa.
+ * Dados lidos: JSON-LD (schema.org Audiobook: name, author, readBy, duration, publisher, image),
+ * JSON embutido do site, metatags (og:title/og:image) e, por fim, o texto da página
+ * ("Escrito por:", "Narrado por:", "Duração: 8 h e 4 min"...). Se o site bloquear,
+ * dá para colar o TEXTO da página no mesmo campo.
+ */
+const PAGE_READERS = [
+  (u) => ({ name: 'allorigins', url: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u), kind: 'html' }),
+  (u) => ({ name: 'codetabs', url: 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u), kind: 'html' }),
+  (u) => ({ name: 'corsproxy', url: 'https://corsproxy.io/?url=' + encodeURIComponent(u), kind: 'html' }),
+  (u) => ({ name: 'jina', url: 'https://r.jina.ai/' + u, kind: 'html', headers: { 'X-Return-Format': 'html' } }),
+  (u) => ({ name: 'jina texto', url: 'https://r.jina.ai/' + u, kind: 'text' })
+];
+const AUDIO_HOSTS = [[/audible\./, 'Audible'], [/storytel\./, 'Storytel'], [/ubook\./, 'Ubook'], [/play\.google\./, 'Google Play Livros'],
+  [/books\.apple\.|apple\.com/, 'Apple Books'], [/spotify\./, 'Spotify'], [/skeelo\./, 'Skeelo'], [/tocalivros\./, 'Tocalivros'], [/kobo\./, 'Kobo'],
+  [/bookbeat\./, 'BookBeat'], [/everand\.|scribd\./, 'Everand'], [/libro\.fm/, 'Libro.fm'], [/audiobooks\.com/, 'Audiobooks.com'], [/chirpbooks\./, 'Chirp'],
+  [/amazon\.|amzn\.|^a\.co$/, 'Amazon']];
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch (e) { return ''; } };
+function platformOf(u) { const h = hostOf(u); const m = AUDIO_HOSTS.find(([r]) => r.test(h)); return m ? m[1] : h; }
+const isAudioLink = (u) => { const h = hostOf(u); return !!h && AUDIO_HOSTS.some(([r, n]) => n !== 'Amazon' && r.test(h)); };
+
+function isoDur(s) {
+  const m = String(s || '').trim().toUpperCase().match(/^P(?:(\d+)D)?T(?:(\d+(?:\.\d+)?)H)?(?:(\d+(?:\.\d+)?)M)?(?:(\d+(?:\.\d+)?)S)?$/);
+  if (!m || !(m[2] || m[3] || m[4])) return NaN;
+  return Math.round((+(m[1] || 0)) * 86400 + (+(m[2] || 0)) * 3600 + (+(m[3] || 0)) * 60 + (+(m[4] || 0)));
+}
+/* "8 h e 4 min", "11 hrs and 30 mins", "7 horas 12 minutos 3 segundos", "08:12:33", "PT8H4M" */
+function textDur(s) {
+  s = String(s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (!s) return NaN;
+  const iso = isoDur(s);
+  if (isFinite(iso)) return iso;
+  let m = s.match(/\b(\d{1,3}):(\d{2})(?::(\d{2}))?\b/);
+  if (m) return (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0));
+  const h = s.match(/(\d+)\s*(?:horas?|hours?|hrs?|std\.?|h)(?![a-z])/);
+  const mi = s.match(/(\d+)\s*(?:minutos?|minutes?|mins?|m)(?![a-z])/);
+  const se = s.match(/(\d+)\s*(?:segundos?|seconds?|secs?|seg|s)(?![a-z])/);
+  if (!h && !mi) return NaN;
+  return (h ? +h[1] * 3600 : 0) + (mi ? +mi[1] * 60 : 0) + (se ? +se[1] : 0);
+}
+const cutVal = (v) => String(v || '').split(/\s{3,}|\s[|•·]\s|\b(?:Narrad[oa] por|Narra[cç][aã]o|Dura[cç][aã]o|Editora|Data de|Lan[cç]amento|Idioma|Categoria|Length|Release|Language|Publisher|Narrated by)\b/i)[0]
+  .replace(/^[\s:–-]+|[\s,;:–-]+$/g, '').replace(/\s{2,}/g, ' ').slice(0, 90).trim();
+function labeled(text, labels) {
+  const m = text.match(new RegExp('(?:^|\\n)[ \\t]*(?:' + labels + ')[ \\t]*[:：][ \\t]*\\n?[ \\t]*([^\\n]{2,140})', 'i'));
+  return m ? cutVal(m[1]) : '';
+}
+const L_AUTHOR = 'escrito por|autor(?:es|as|a)?|de autoria de|written by|by|author(?:s)?|autor\\(a\\)';
+const L_NARR = 'narrado por|narrada por|narra[cç][aã]o|narrador(?:es|as|a)?|narrated by|narrator(?:s)?|lido por|read by|voz(?:es)?|narrador\\(a\\)';
+const L_PUB = 'editora|publisher|publicado por|published by|selo|produ[cç][aã]o|editor';
+const L_DUR = 'dura[cç][aã]o|tempo de reprodu[cç][aã]o|tempo de escuta|tempo total|tempo|length|duration|duraci[oó]n|listening length';
+function durFromText(text) {
+  const m = text.match(new RegExp('(?:^|\\n|\\s)(?:' + L_DUR + ')[ \\t]*[:：]?[ \\t]*\\n?[ \\t]*([^\\n]{1,60})', 'i'));
+  const t = m ? textDur(m[1]) : NaN;
+  if (isFinite(t) && t >= 60) return t;
+  const u = text.match(/\b(\d{1,3})\s*(?:h|hrs?|horas?|hours?)\s*(?:e|and|,)?\s*(\d{1,2})\s*(?:min|mins|minutos?|minutes?)\b/i);
+  return u ? (+u[1]) * 3600 + (+u[2]) * 60 : NaN;
+}
+function cleanAbTitle(t) {
+  t = String(t || '').replace(/\s+/g, ' ').trim();
+  const parts = t.split(/\s+\|\s+/);
+  t = parts[0];
+  t = t.replace(/\s+[–—-]\s+(?:Audible|Storytel|Ubook|Google Play.*|Apple Books|Spotify|Amazon.*|Skeelo|Tocalivros|Kobo|BookBeat|Everand)\s*$/i, '');
+  t = t.replace(/^(?:ouça|ouvir|escute|listen to|audiobook|audiolivro)\s*[:–-]?\s+/i, '')
+    .replace(/\s*[([]?\b(?:audiolivro|audiobook|áudio ?livro|audio ?livro|livro em áudio|unabridged|integral|edição integral)\b[)\]]?/gi, ' ')
+    .replace(/\s{2,}/g, ' ').replace(/[\s:–-]+$/, '').trim();
+  return t;
+}
+const bigCover = (u) => String(u || '').replace(/^http:/, 'https:').replace(/\._[A-Z0-9_,]+_\.(jpe?g|png)$/i, '._SL500_.$1');
+
+function htmlToText(html) {
+  const h = String(html).replace(/<(script|style|noscript|svg|template)\b[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h[1-6]|tr|dt|dd|section|ul|ol|td|th|header|footer|article|button)>/gi, '$&\n');
+  const d = new DOMParser().parseFromString(h, 'text/html');
+  return (d.body ? d.body.textContent : '').split('\n').map((x) => x.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean).join('\n');
+}
+function deepFind(o, keyRe, depth) {
+  if (!o || typeof o !== 'object' || (depth || 0) > 8) return undefined;
+  if (Array.isArray(o)) { for (const x of o) { const r = deepFind(x, keyRe, (depth || 0) + 1); if (r !== undefined) return r; } return undefined; }
+  for (const k of Object.keys(o)) if (keyRe.test(k) && o[k] != null && o[k] !== '') return { k, v: o[k] };
+  for (const k of Object.keys(o)) { const r = deepFind(o[k], keyRe, (depth || 0) + 1); if (r !== undefined) return r; }
+  return undefined;
+}
+const nameList = (v) => [].concat(v || []).map((x) => (typeof x === 'string' ? x : x && (x.name || x.title))).filter(Boolean).map((s) => String(s).trim()).filter((s, i, a) => a.indexOf(s) === i);
+const imgOf = (v) => { v = [].concat(v || [])[0]; return typeof v === 'string' ? v : (v && (v.url || v.contentUrl)) || ''; };
+
+function parseAudioHtml(html, url) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const r = { title: '', author: '', narrator: '', publisher: '', durationSec: 0, cover: '' };
+  const take = (k, v) => { if (!r[k] && v) r[k] = v; };
+  // 1) JSON-LD
+  const nodes = [];
+  const walk = (o, d) => {
+    if (!o || typeof o !== 'object' || d > 6) return;
+    if (Array.isArray(o)) { o.forEach((x) => walk(x, d + 1)); return; }
+    nodes.push(o);
+    ['@graph', 'workExample', 'mainEntity', 'itemListElement', 'item', 'exampleOfWork', 'about'].forEach((k) => o[k] && walk(o[k], d + 1));
+  };
+  doc.querySelectorAll('script[type="application/ld+json"]').forEach((s) => { try { walk(JSON.parse(s.textContent), 0); } catch (e) { /* JSON inválido */ } });
+  const typ = (o) => [].concat(o['@type'] || []).join(' ').toLowerCase() + ' ' + String(o.bookFormat || '').toLowerCase();
+  const rank = (o) => (/audiobook/.test(typ(o)) ? 3 : /book/.test(typ(o)) ? 2 : /product|creativework/.test(typ(o)) ? 1 : 0);
+  nodes.filter((o) => rank(o) > 0).sort((a, b) => rank(b) - rank(a)).forEach((o) => {
+    take('title', o.name || o.headline);
+    take('author', nameList(o.author).join(', '));
+    take('narrator', nameList(o.readBy || o.narrator).join(', '));
+    take('publisher', nameList(o.publisher).join(', '));
+    const d = isoDur(o.duration || o.timeRequired);
+    if (!r.durationSec && isFinite(d) && d >= 60) r.durationSec = d;
+    take('cover', imgOf(o.image || o.thumbnailUrl));
+  });
+  // 2) JSON embutido (Audible "adbl-product-metadata", Next.js etc.)
+  if (!r.durationSec || !r.narrator || !r.author) {
+    doc.querySelectorAll('script[type="application/json"], script#__NEXT_DATA__').forEach((s) => {
+      if (s.textContent.length > 1500000) return;
+      let j; try { j = JSON.parse(s.textContent); } catch (e) { return; }
+      const n = deepFind(j, /^(narrators?|readBy|narradores?)$/i); if (n) take('narrator', nameList(n.v).join(', '));
+      const a = deepFind(j, /^(authors?|autores?)$/i); if (a) take('author', nameList(a.v).join(', '));
+      const p = deepFind(j, /^(publisher|publisherName|editora)$/i); if (p) take('publisher', nameList(p.v).join(', '));
+      if (!r.durationSec) {
+        const d = deepFind(j, /^(duration|runtime|runtimeLength|lengthInMinutes|runtime_length_min|durationInSeconds|duration_seconds|durationSeconds|length)$/i);
+        if (d) {
+          let sec = NaN;
+          if (typeof d.v === 'number') sec = /min/i.test(d.k) ? d.v * 60 : /sec/i.test(d.k) ? d.v : d.v > 36000 ? (d.v > 3600000 ? d.v / 1000 : d.v) : NaN;
+          else if (typeof d.v === 'string') sec = textDur(d.v);
+          if (isFinite(sec) && sec >= 60) r.durationSec = Math.round(sec);
+        }
+      }
+    });
+  }
+  // 3) metatags
+  const meta = (sel) => { const e = doc.querySelector(sel); return e ? String(e.getAttribute('content') || '').trim() : ''; };
+  const ogTitle = meta('meta[property="og:title"]') || meta('meta[name="twitter:title"]') || (doc.title || '').trim();
+  take('title', ogTitle);
+  take('cover', meta('meta[property="og:image"]') || meta('meta[name="twitter:image"]') || meta('meta[property="og:image:secure_url"]'));
+  take('author', meta('meta[property="books:author"]') || meta('meta[property="book:author"]') || meta('meta[name="author"]'));
+  // 4) texto da página
+  const t = parseAudioText(htmlToText(html), url);
+  ['author', 'narrator', 'publisher'].forEach((k) => take(k, t[k]));
+  if (!r.durationSec && t.durationSec) r.durationSec = t.durationSec;
+  if (!r.title) r.title = t.title;
+  // autor pelo título "Livro Audiolivro | Autor | Audible.com.br"
+  const segs = String(ogTitle).split(/\s+\|\s+/);
+  if (!r.author && segs.length >= 3) r.author = segs[1].replace(/^(por|by)\s+/i, '');
+  return finishAudio(r, url);
+}
+function parseAudioText(text, url) {
+  const raw = String(text || '').replace(/\r/g, '');
+  const imgs = Array.from(raw.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)).map((m) => m[1]);
+  const cover = imgs.find((u) => /media-amazon|images-amazon|storytel|ubook|googleusercontent|mzstatic|scdn\.co|i\.scdn|cover|capa|skeelo|kobo/i.test(u) && !/sprite|logo|icon|badge|avatar|star/i.test(u)) || '';
+  const T = raw.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_#>`]+/g, ' ')
+    .split('\n').map((x) => x.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean).join('\n');
+  const tl = (T.match(/^Title:\s*(.+)$/m) || [])[1];
+  const firstLine = T.split('\n').find((x) => x.length > 2 && !/^(URL Source|Markdown Content|Published Time)/i.test(x)) || '';
+  return finishAudio({
+    title: tl || firstLine, author: labeled(T, L_AUTHOR), narrator: labeled(T, L_NARR), publisher: labeled(T, L_PUB),
+    durationSec: durFromText(T) || 0, cover
+  }, url);
+}
+function finishAudio(r, url) {
+  r.title = cleanAbTitle(r.title);
+  r.author = cutVal(r.author); r.narrator = cutVal(r.narrator); r.publisher = cutVal(r.publisher);
+  r.durationSec = Math.round(r.durationSec || 0);
+  r.cover = safeUrl(bigCover(r.cover));
+  r.platform = url ? platformOf(url) : '';
+  r.url = safeUrl(url || '');
+  return r;
+}
+const abScore = (r) => (r ? (r.title ? 1 : 0) + (r.author ? 1 : 0) + (r.durationSec ? 3 : 0) + (r.cover ? 1 : 0) + (r.narrator ? 0.5 : 0) : 0);
+const isBlockedPage = (h, min) => h.length < (min || 400) || (/captcha|robot check|are you a human|access denied|cf-chl|attention required/i.test(h) && h.length < 60000);
+
+function readPage(p, ms) {
+  const c = new AbortController();
+  const timer = setTimeout(() => c.abort(), ms);
+  return fetch(p.url, { signal: c.signal, headers: p.headers || {}, credentials: 'omit', referrerPolicy: 'no-referrer' })
+    .then((res) => { if (!res.ok) throw new Error('HTTP ' + res.status); return res.text(); })
+    .finally(() => clearTimeout(timer));
+}
+function fetchAudioInfo(url) {
+  return new Promise((resolve) => {
+    let best = null;
+    let left = PAGE_READERS.length;
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(best); } };
+    PAGE_READERS.forEach((mk) => {
+      const p = mk(url);
+      readPage(p, 16000).then((body) => {
+        if (done) return;
+        const r = p.kind === 'text' ? (isBlockedPage(body, 80) ? null : parseAudioText(body, url)) : (isBlockedPage(body) ? null : parseAudioHtml(body, url));
+        if (r && r.title && abScore(r) > abScore(best)) { best = r; best.via = p.name; }
+        if (best && best.title && best.durationSec && (best.cover || best.author)) finish();
+      }).catch(() => null).finally(() => { if (--left === 0) finish(); });
+    });
+    setTimeout(finish, 22000);
+  });
+}
+function fillAudioForm(r) {
+  const set = (sel, v) => { const e = $(sel); if (e && v) e.value = v; };
+  set('#f-title', r.title);
+  set('#f-author', r.author);
+  set('#f-narr', r.narrator);
+  const pub = r.publisher && r.platform && r.publisher.toLowerCase() !== r.platform.toLowerCase() ? r.publisher + ' · ' + r.platform : r.publisher || r.platform;
+  set('#f-pub', pub);
+  if (r.durationSec) { const p = splitHms(r.durationSec); set('[name=dur_h]', String(p[0])); set('[name=dur_m]', pad(p[1])); set('[name=dur_s]', pad(p[2])); }
+  if (r.cover) pickCover(r.cover);
+}
+let abImportSeq = 0;
+async function importAudioLink(raw) {
+  const st = $('#abImpStatus');
+  const say = (h) => { if (st) st.innerHTML = h; };
+  const txt = String(raw || '').trim();
+  if (!txt) { toast('Cole o link da página do audiobook.'); return; }
+  const url = ((txt.match(/https?:\/\/[^\s<>"']+/i) || [''])[0]).replace(/[)\].,;]+$/, '');
+  const seq = ++abImportSeq;
+  let r = null;
+  const isTextOnly = !url || txt.replace(url, '').trim().length > 80; // texto da página colado
+  if (isTextOnly) r = parseAudioText(txt, url);
+  else {
+    if (!navigator.onLine) { say('Sem internet. Conecte-se ou cole o texto da página.'); return; }
+    say('<span class="status-line"><span class="spinner"></span>Lendo a página do ' + esc(platformOf(url) || 'site') + '…</span>');
+    r = await fetchAudioInfo(url);
+    if (seq !== abImportSeq || !$('#abImpStatus')) return;
+  }
+  if (!r || !r.title) {
+    say('<b>Não consegui ler essa página</b> (o site bloqueia leitura automática ou o leitor público está fora do ar). ' +
+      'Plano B: abra a página no navegador, toque em ⋮ › Compartilhar › Copiar texto, ou selecione todo o texto e copie, e cole aqui no lugar do link.');
+    return;
+  }
+  fillAudioForm(r);
+  const got = [r.title && 'título', r.author && 'autor', r.narrator && 'narrador', r.durationSec && 'duração (' + clockHms(r.durationSec) + ')', (r.publisher || r.platform) && 'editora/plataforma', r.cover && 'capa'].filter(Boolean);
+  const miss = [!r.author && 'autor', !r.durationSec && 'duração', !r.cover && 'capa'].filter(Boolean);
+  say('✓ Preenchido: ' + esc(got.join(', ')) + '.' + (miss.length ? ' Falta: ' + esc(miss.join(', ')) + ' — complete à mão' + (!r.cover ? ' ou use "Buscar capa"' : '') + '.' : ' Confira e toque em Salvar.'));
 }
 
 /* ======================= foto de perfil ======================= */
@@ -2428,6 +2677,15 @@ const handlers = {
   abStop: () => abStop(false),
   abAdd: (el) => { const a = audioById(S.activeAudioId); if (!a) return; a.positionSec = Math.min(a.durationSec, a.positionSec + (+el.dataset.v)); if (a.positionSec >= a.durationSec) { a.finished = true; a.finishedAt = Date.now(); } save(); renderAudio(); toast('Posição atualizada: ' + hms(a.positionSec) + '.'); },
   abPosDlg: () => openAudioPosDlg(),
+  abImport: () => { const t = $('#f-link'); importAudioLink(t ? t.value : ''); },
+  abPaste: async () => {
+    const t = $('#f-link');
+    let text = '';
+    try { text = navigator.clipboard && navigator.clipboard.readText ? await navigator.clipboard.readText() : ''; } catch (e) { text = ''; }
+    if (!text) { if (t) t.focus(); toast('Toque e segure no campo e escolha Colar.'); return; }
+    if (t) t.value = text;
+    importAudioLink(text);
+  },
   abMode: (el) => { const box = $('#progBox'); const f = el.closest('form'); if (!box || !f) return; const a = audioById(f.dataset.id); box.innerHTML = progressFields(a, el.dataset.v); },
   avatar: () => avatarMenu(),
   avatarPick: () => pickAvatar(),
@@ -2524,6 +2782,10 @@ document.addEventListener('submit', (e) => {
   else if (kind === 'jump') { const q = parseInt(new FormData(f).get('page'), 10); closeDialog(); if (q) jumpTo(q); }
 });
 document.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('.hms input')) hmsTyping(e.target); });
+document.addEventListener('paste', (e) => {
+  if (!e.target || e.target.id !== 'f-link') return;
+  setTimeout(() => { const v = e.target.value.trim(); if (/^https?:\/\/\S+$/i.test(v)) importAudioLink(v); }, 0);
+});
 document.addEventListener('change', (e) => {
   const kind = e.target.dataset && e.target.dataset.change;
   if (!kind) return;

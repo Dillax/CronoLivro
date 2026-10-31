@@ -1,4 +1,4 @@
-CronoLeitura v2.12 (PWA)
+CronoLeitura v2.13 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -41,6 +41,16 @@ Sem chave, o Google divide um limite único entre todos os sites sem chave, e el
 6. No app: Histórico > Google Livros > cole a chave. Sem cartão de crédito; ~1000 buscas/dia.
 
 AUDIOBOOKS (aba "Áudio")
+- IMPORTAR PELO LINK: em "Adicionar audiobook", cole o link da página (Audible, Storytel, Ubook,
+  Google Play, Apple Books, Skeelo, Tocalivros…) e toque em "Buscar dados" (colar o link já busca).
+  O app preenche título, autor, narrador, duração (h/min/s), editora · plataforma e baixa a capa.
+  Funciona sem servidor próprio: a página é lida por leitores públicos gratuitos (allorigins,
+  codetabs, corsproxy, r.jina.ai), em paralelo; vale o primeiro que responder bem.
+- Se o site bloquear a leitura automática: abra a página, copie o TEXTO (selecionar tudo > copiar)
+  e cole no mesmo campo. O app lê "Escrito por:", "Narrado por:", "Duração:", "Editora:".
+- Android com o app instalado: no app do Audible/Storytel toque em Compartilhar > CronoLeitura:
+  abre a aba Áudio com tudo preenchido.
+- O link fica salvo: aparece "Página no Audible ↗" no cartão do audiobook.
 - Cadastre título, autor, narrador, editora/plataforma, capa (busca ou foto) e duração total
   em três caixas: horas, minutos e segundos (ex.: 6 h 06 min 29 s), com teclado numérico.
   Também dá para colar 6:06:29 ou 6h06min29s na caixa das horas: o app separa sozinho.
