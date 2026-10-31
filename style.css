@@ -744,3 +744,7 @@ a.ab-page { color: var(--diamond); font-size: .86rem; text-decoration: none; fon
 .cover-q .btn { flex: none; }
 .cover-q svg, .dlg-cover-btns svg { width: 16px; height: 16px; }
 .cover-opts.sq .opt-img { aspect-ratio: 1; height: auto; object-fit: cover; }
+.cover-diag { display: flex; flex-wrap: wrap; gap: 4px 10px; margin: 0 0 6px; font-size: .72rem; color: var(--muted); }
+.cover-diag .ok { color: #8ff0c0; }
+.cover-diag .none { opacity: .6; }
+.cover-more a { color: var(--diamond); }

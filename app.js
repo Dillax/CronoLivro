@@ -146,7 +146,7 @@ function save() {
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
 const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
 const anyById = (id) => bookById(id) || audioById(id);
-const APP_VERSION = '2.14.0';
+const APP_VERSION = '2.15.0';
 const DEVELOPER = 'Robert Simão dos Santos';
 const activeBook = () => bookById(S.activeBookId);
 
@@ -1237,18 +1237,12 @@ async function coverCandidates(title, author, isbn, audio) {
   const out = [];
   const add = (u, src) => { u = safeUrl(u); if (u && !out.some((x) => x.url === u)) out.push({ url: u, src }); };
   if (!isbn) { const qi = isbnOf(String(title || '')); if (qi) { isbn = qi; title = ''; } }
-  if (audio && title) {
-    const q = [title, author ? author.split(',')[0] : ''].filter(Boolean).join(' ');
-    const [ab, it] = await Promise.all([audibleSearch(q).catch(() => []), itunesAudio(q).catch(() => [])]);
-    ab.forEach((x) => add(x.cover, 'Audible'));
-    it.forEach((x) => add(x.cover, 'Apple Books'));
-  }
   if (isbn) {
     add(amazonCoverByIsbn(isbn), 'Amazon');
     add('https://covers.openlibrary.org/b/isbn/' + cleanIsbn(isbn) + '-L.jpg?default=false', 'Open Library');
   }
   if (!title && !author && isbn) return out;
-  const qParts = [title ? 'intitle:' + title : '', author ? 'inauthor:' + author.split(',')[0] : ''].filter(Boolean).join(' ');
+  const qParts = [title, author ? author.split(',')[0] : ''].filter(Boolean).join(' ');
   const gBase = 'https://www.googleapis.com/books/v1/volumes?printType=books&maxResults=30&fields=items(volumeInfo(imageLinks(thumbnail,smallThumbnail),industryIdentifiers,language))&q=' + encodeURIComponent(qParts || title);
   const jobs = [
     gFetch(gBase + '&langRestrict=pt').catch(() => ({})),
@@ -1273,41 +1267,143 @@ async function coverCandidates(title, author, isbn, audio) {
   return out.slice(0, 48);
 }
 let coverSeq = 0;
-async function openCoverSearch(qOverride) {
+/* ---------- busca de imagens na internet, dentro do app ----------
+ * Como no Smart AudioBook Player: o app mostra as imagens da busca e, ao tocar numa delas,
+ * baixa e aplica a capa. As páginas de busca (Bing, DuckDuckGo, Google) são lidas pelos
+ * leitores públicos; a imagem é baixada direto ou pelo wsrv.nl. */
+function raceReaders(target, ms, accept) {
+  return new Promise((resolve) => {
+    const rs = PAGE_READERS.filter((mk) => mk(target).kind === 'html');
+    let left = rs.length;
+    let done = false;
+    const end = (v) => { if (!done) { done = true; resolve(v); } };
+    rs.forEach((mk, i) => setTimeout(() => {
+      if (done) { left--; return; }
+      readPage(mk(target), ms).then((body) => { let v = null; try { v = accept(body); } catch (e) { v = null; } if (v) end(v); })
+        .catch(() => null).finally(() => { if (--left === 0) end(null); });
+    }, i * 250));
+    setTimeout(() => end(null), ms + 1500);
+  });
+}
+const httpsImg = (u) => (/^https:\/\//i.test(u) ? u : /^http:\/\//i.test(u) ? wsrv(u) : '');
+function parseBing(html) {
+  const out = [];
+  const push = (m, t) => { const url = httpsImg(m); if (url && !out.some((x) => x.url === url)) out.push({ url, thumb: httpsImg(t) || url, src: 'Bing' }); };
+  try {
+    new DOMParser().parseFromString(html, 'text/html').querySelectorAll('[m]').forEach((a) => {
+      try { const j = JSON.parse(a.getAttribute('m')); if (j && j.murl) push(j.murl, j.turl); } catch (e) { /* outro atributo m */ }
+    });
+  } catch (e) { /* segue */ }
+  if (!out.length) {
+    const dec = (s) => s.replace(/&amp;/g, '&').replace(/\\u0026/g, '&').replace(/\\\//g, '/');
+    const re = /murl(?:&quot;|\\?")\s*:\s*(?:&quot;|\\?")(.*?)(?:&quot;|\\?")[\s\S]{0,600}?turl(?:&quot;|\\?")\s*:\s*(?:&quot;|\\?")(.*?)(?:&quot;|\\?")/g;
+    let m;
+    while ((m = re.exec(html)) && out.length < 40) push(dec(m[1]), dec(m[2]));
+  }
+  return out.slice(0, 30);
+}
+function parseGoogleImg(html) {
+  const out = [];
+  const re = /(?:src|data-src)="(https:\/\/encrypted-tbn\d\.gstatic\.com\/images\?q=tbn:[^"]+)"/g;
+  let m;
+  while ((m = re.exec(html)) && out.length < 24) {
+    const u = m[1].replace(/&amp;/g, '&');
+    if (!out.some((x) => x.url === u)) out.push({ url: u, thumb: u, src: 'Google' });
+  }
+  return out;
+}
+async function bingImages(q) {
+  return (await raceReaders('https://www.bing.com/images/search?q=' + encodeURIComponent(q) + '&setlang=pt-BR&cc=BR&first=1', 12000,
+    (b) => { const l = parseBing(b); return l.length ? l : null; })) || [];
+}
+async function ddgImages(q) {
+  const vqd = await raceReaders('https://duckduckgo.com/?q=' + encodeURIComponent(q) + '&iax=images&ia=images', 10000,
+    (b) => { const m = b.match(/vqd=["']?([\d-]{8,})/); return m ? m[1] : null; });
+  if (!vqd) return [];
+  const j = await raceReaders('https://duckduckgo.com/i.js?l=br-pt&o=json&f=,,,,,&p=1&q=' + encodeURIComponent(q) + '&vqd=' + vqd, 10000,
+    (b) => { const x = JSON.parse(b); return x && Array.isArray(x.results) && x.results.length ? x : null; });
+  return j ? j.results.slice(0, 30).map((r) => ({ url: httpsImg(r.image), thumb: httpsImg(r.thumbnail) || httpsImg(r.image), src: 'DuckDuckGo' })).filter((x) => x.url) : [];
+}
+async function googleImages(q) {
+  return (await raceReaders('https://www.google.com/search?tbm=isch&gbv=1&hl=pt-BR&q=' + encodeURIComponent(q), 12000,
+    (b) => { const l = parseGoogleImg(b); return l.length ? l : null; })) || [];
+}
+async function itunesCovers(q, audio) {
+  const one = async (media) => {
+    const u = 'https://itunes.apple.com/search?media=' + media + '&country=br&limit=15&term=' + encodeURIComponent(q);
+    let j = null;
+    try { j = await fetchJSON(u, 8000); } catch (e) { j = await jsonp(u, 9000); }
+    return ((j && j.results) || []).map((x) => String(x.artworkUrl100 || x.artworkUrl60 || '').replace(/\/\d+x\d+(bb)?\.(jpg|png)$/i, '/600x600bb.jpg')).filter(Boolean);
+  };
+  const lists = await Promise.all((audio ? ['audiobook', 'ebook'] : ['ebook', 'audiobook']).map((m) => one(m).catch(() => [])));
+  return [].concat(...lists).map((u) => ({ url: u, thumb: u.replace('/600x600bb.jpg', '/200x200bb.jpg'), src: 'Apple Books' }));
+}
+async function openCoverSearch(qOverride, webFirst) {
   const grid = $('#coverGrid');
   if (!grid) return;
   const audio = !!$('form[data-form="audio"]');
   const typedQ = qOverride != null ? String(qOverride).trim() : '';
-  const title = typedQ || (($('#f-title') || {}).value || '').trim();
-  const author = typedQ ? '' : (($('#f-author') || {}).value || '').trim();
-  const isbn = typedQ ? '' : (($('input[name="isbn"]') || {}).value || '').trim();
-  const qVal = typedQ || [title, author.split(',')[0]].filter(Boolean).join(' ') || isbn;
+  let title = typedQ || (($('#f-title') || {}).value || '').trim();
+  const author = typedQ ? '' : (($('#f-author') || {}).value || '').trim().split(',')[0];
+  let isbn = typedQ ? '' : (($('input[name="isbn"]') || {}).value || '').trim();
+  const qVal = typedQ || [title, author].filter(Boolean).join(' ') || isbn;
   const box = '<div class="cover-q"><input id="coverQ" type="search" enterkeyhint="search" placeholder="Título, autor ou ISBN" value="' + esc(qVal) + '">' +
     '<button type="button" class="btn sm primary" data-act="coverQ">' + ICON.search + ' Buscar</button></div>';
   grid.hidden = false;
   if (!title && !isbn) { grid.innerHTML = box + '<p class="hint">Digite o título (ou o ISBN) e toque em Buscar.</p>'; const q = $('#coverQ'); if (q) q.focus(); return; }
   if (!navigator.onLine) { toast('Sem internet: use "Foto / galeria".'); return; }
+  const qi = isbnOf(title);
+  if (qi) { isbn = qi; title = ''; }
   const seq = ++coverSeq;
-  grid.innerHTML = box + '<div class="status-line"><div class="spinner"></div>Procurando capas' + (audio ? ' (Audible, Apple Books, Google, Amazon…)' : '') + '…</div>';
-  const list = await coverCandidates(title, author, isbn, audio);
-  if (!$('#coverGrid') || seq !== coverSeq) return;
-  grid.innerHTML = box + (list.length
-    ? '<p class="hint">Toque na capa certa para salvar no celular.</p><div class="cover-opts' + (audio ? ' sq' : '') + '">' +
-      list.map((c) => '<button type="button" class="cover-opt" data-act="coverPick" data-url="' + esc(c.url) + '" title="' + esc(c.src) + '">' +
-        '<img class="opt-img" src="' + esc(c.url) + '" alt="Capa (' + esc(c.src) + ')" loading="lazy" referrerpolicy="no-referrer"><span>' + esc(c.src) + '</span></button>').join('') + '</div>'
-    : '<div class="status-line">Nenhuma capa encontrada. Tente outro termo, "Google Imagens" ou "Foto / galeria".</div>');
+  const q = [title, author].filter(Boolean).join(' ');
+  const webQ = (q || isbn) + (audio ? ' audiobook capa' : ' livro capa');
+  const items = [];
+  const st = {};
+  const SRC = [
+    ['Audible', audio && q ? () => audibleSearch(q).then((l) => l.map((x) => ({ url: x.cover, thumb: x.cover, src: 'Audible' }))) : null],
+    ['Apple Books', q ? () => itunesCovers(q, audio) : null],
+    ['Google Livros/Amazon/Open Library', () => coverCandidates(title, author, isbn).then((l) => l.map((x) => ({ url: x.url, thumb: x.url, src: x.src })))],
+    ['Bing', () => bingImages(webQ)],
+    ['DuckDuckGo', () => ddgImages(webQ)],
+    ['Google', () => googleImages(webQ)]
+  ].filter((x) => x[1]);
+  const web = (s) => /^(Bing|DuckDuckGo|Google)$/.test(s);
+  const order = (s) => (webFirst ? (web(s) ? 0 : 1) : (web(s) ? 1 : 0));
+  const paint = () => {
+    if (!$('#coverGrid') || seq !== coverSeq) return;
+    const running = SRC.filter(([n]) => st[n] == null).length;
+    const list = items.slice().sort((a, b) => order(a.src) - order(b.src));
+    const diag = SRC.map(([n]) => '<span class="' + (st[n] == null ? 'wait' : st[n] ? 'ok' : 'none') + '">' + esc(n) + (st[n] == null ? ' …' : ': ' + st[n]) + '</span>').join('');
+    grid.innerHTML = box + '<p class="cover-diag">' + diag + '</p>' +
+      (list.length ? '<p class="hint">Toque na imagem certa: o app baixa e aplica a capa.</p><div class="cover-opts' + (audio ? ' sq' : '') + '">' +
+        list.map((c) => '<button type="button" class="cover-opt" data-act="coverPick" data-url="' + esc(c.url) + '" data-thumb="' + esc(c.thumb || c.url) + '" title="' + esc(c.src) + '">' +
+          '<img class="opt-img" src="' + esc(c.thumb || c.url) + '" alt="Capa (' + esc(c.src) + ')" loading="lazy" referrerpolicy="no-referrer"><span>' + esc(c.src) + '</span></button>').join('') + '</div>' : '') +
+      (running ? '<div class="status-line"><div class="spinner"></div>Procurando em ' + running + (running === 1 ? ' fonte' : ' fontes') + '…</div>'
+        : !list.length ? '<div class="status-line">Nenhuma imagem encontrada. Tente outro termo (só o título), "Colar capa" ou "Foto / galeria".</div>' : '') +
+      '<p class="hint cover-more">Não achou? <a href="https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(webQ) + '" target="_blank" rel="noopener">Abrir no Google Imagens</a>, toque e segure na imagem › "Copiar imagem" e use "Colar capa".</p>';
+    grid.querySelectorAll('.opt-img').forEach((img) => {
+      const drop = () => { const b = img.closest('.cover-opt'); if (b) { b.remove(); const i = items.findIndex((x) => x.url === b.dataset.url); if (i >= 0) items.splice(i, 1); } };
+      if (img.complete && img.naturalWidth && img.naturalWidth < 40) drop();
+      img.onload = () => { if (img.naturalWidth < 40) drop(); };
+      img.onerror = drop;
+    });
+  };
+  paint();
+  try { grid.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { /* segue */ }
+  SRC.forEach(([name, fn]) => {
+    Promise.resolve().then(fn).catch(() => []).then((l) => {
+      if (seq !== coverSeq) return;
+      let n = 0;
+      (l || []).forEach((x) => { const u = safeUrl(x.url); if (u && !items.some((y) => y.url === u)) { items.push({ url: u, thumb: safeUrl(x.thumb) || u, src: x.src || name }); n++; } });
+      st[name] = n;
+      paint();
+    });
+  });
 }
-/* Google Imagens em outra aba: toque e segure na capa › "Copiar imagem" (ou "Copiar endereço
- * da imagem"), volte ao app e toque em "Colar capa". É o equivalente web do recurso do
- * Smart AudioBook Player (que, por ser app nativo, baixa a imagem tocada dentro dele). */
 function openGoogleImages() {
   const t = (($('#f-title') || {}).value || '').trim();
-  const a = (($('#f-author') || {}).value || '').trim().split(',')[0];
-  const audio = !!$('form[data-form="audio"]');
-  if (!t) { toast('Digite o título primeiro.'); return; }
-  window.open('https://www.google.com/search?tbm=isch&q=' + encodeURIComponent([t, a, audio ? 'audiobook capa' : 'livro capa'].filter(Boolean).join(' ')), '_blank', 'noopener');
-  const n = $('#dlgCoverNote');
-  if (n) n.textContent = 'No Google: toque e segure na capa › "Copiar imagem" ou "Copiar endereço da imagem". Volte aqui e toque em "Colar capa".';
+  if (!t) { toast('Digite o título primeiro.'); const f = $('#f-title'); if (f) f.focus(); return; }
+  openCoverSearch(null, true);
 }
 function imgUrlFromText(text) {
   const m = String(text || '').match(/https?:\/\/[^\s<>"']+/i);
@@ -1342,7 +1438,7 @@ async function pasteCover() {
 }
 const coverBtnsHtml = () => '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Buscar capa</button>' +
   '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button>' +
-  '<button type="button" class="btn sm ghost" data-act="coverGoogle">' + ICON.search + ' Google Imagens</button>' +
+  '<button type="button" class="btn sm ghost" data-act="coverGoogle">' + ICON.search + ' Pesquisar na internet</button>' +
   '<button type="button" class="btn sm ghost" data-act="coverPaste">' + ICON.paste + ' Colar capa</button></div>';
 function showPendingPreview(src, note) {
   const box = $('#dlgCoverImg');
@@ -1350,11 +1446,12 @@ function showPendingPreview(src, note) {
   const n = $('#dlgCoverNote');
   if (n) n.textContent = note;
 }
-async function pickCover(url) {
+async function pickCover(url, thumb) {
   const grid = $('#coverGrid');
   if (grid) grid.querySelectorAll('.cover-opt').forEach((b) => b.classList.toggle('sel', b.dataset.url === url));
-  showPendingPreview(url, 'Salvando capa…');
-  const blob = await grabImage(url);
+  showPendingPreview(thumb || url, 'Baixando a capa…');
+  let blob = await grabImage(url);
+  if (!blob && thumb && thumb !== url) blob = await grabImage(thumb);
   if (blob) {
     pendingCover = { blob, url };
     showPendingPreview(URL.createObjectURL(blob), 'Capa pronta: fica salva no celular ao tocar em Salvar.');
@@ -2875,7 +2972,7 @@ const handlers = {
   coverQ: () => { const q = $('#coverQ'); openCoverSearch(q ? q.value : ''); },
   coverGoogle: () => openGoogleImages(),
   coverPaste: () => pasteCover(),
-  coverPick: (el) => pickCover(el.dataset.url),
+  coverPick: (el) => pickCover(el.dataset.url, el.dataset.thumb),
   coverPhoto: () => pickCoverFile(),
   srcTab: (el) => { srcTab = el.dataset.src === 'cat' ? 'cat' : 'amazon'; renderBooks(); },
   amzPick: (el) => { const r = amz.items[+el.dataset.i]; if (r) importAmazon(r, { asin: r.asin }, el); },
