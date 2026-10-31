@@ -751,3 +751,34 @@ a.ab-page { color: var(--diamond); font-size: .86rem; text-decoration: none; fon
 .cover-btn { position: relative; flex: none; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 10px; color: inherit; font: inherit; }
 .cover-btn .cover-edit { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); white-space: nowrap; font-size: .62rem; font-weight: 700;
   padding: 2px 7px; border-radius: 8px; background: rgba(0, 10, 20, .72); color: #e6fbff; border: 1px solid rgba(160, 230, 255, .4); }
+
+/* ===== v2.17: capas completas, seletor de capa em tela cheia ===== */
+/* capas de audiobook mostram a imagem inteira (quadrada ou de livro), sem cortar */
+.cover.sq { width: 120px; height: auto; aspect-ratio: auto; min-height: 120px; background: rgba(0, 0, 0, .35); }
+.cover.sq img { height: auto; max-height: 180px; object-fit: contain; }
+.cover.tile.sq { width: 100%; height: auto; min-height: 0; aspect-ratio: auto; }
+.cover.tile.sq img { width: 100%; height: auto; max-height: none; }
+.cover.tile.sq:not(:has(img)) { aspect-ratio: 1; }
+.cover.sm.sq { width: 72px; min-height: 72px; }
+.cover.sm.sq img { max-height: 108px; }
+.dlg-cover .cover.sq { width: 96px; min-height: 96px; }
+.dlg-cover .cover.sq img { max-height: 144px; }
+.cover.xs.sq { width: 42px; height: auto; min-height: 42px; }
+.lib-grid { align-items: start; }
+.cover-opt img { object-fit: contain; background: rgba(0, 0, 0, .35); }
+/* seletor */
+dialog.pick { width: 100%; max-width: 640px; height: 100dvh; max-height: 100dvh; margin: 0 auto; border-radius: 0; padding: 0 14px 20px; overflow-y: auto; }
+.pick-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 10px; padding: 12px 0 8px; background: #01060c; }
+.pick-head h2 { margin: 0; font-size: 1.1rem; }
+.pick-back { flex: none; width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(160, 230, 255, .4); background: rgba(0, 0, 0, .4); color: #e6fbff; font-size: 1.3rem; cursor: pointer; }
+.pick-tip { margin: 0 0 10px; color: var(--muted); font-size: .85rem; }
+.pick-foot { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+.pick-foot svg { width: 16px; height: 16px; }
+.pick-view { position: fixed; inset: 0; z-index: 5; background: #000; display: flex; flex-direction: column; }
+.pick-view[hidden] { display: none !important; }
+.pv-top { display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: #000; color: #e6fbff; font-size: .9rem; }
+.pv-img { flex: 1; display: flex; align-items: center; justify-content: center; padding: 10px; min-height: 0; }
+.pv-img img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+.pv-ok { position: fixed; right: 22px; bottom: calc(26px + env(safe-area-inset-bottom)); width: 68px; height: 68px; border-radius: 50%; border: 0; cursor: pointer;
+  background: #29b6f6; color: #fff; font-size: 2rem; font-weight: 800; box-shadow: 0 6px 22px rgba(0, 0, 0, .6), 0 0 18px rgba(41, 182, 246, .6); }
+.pv-ok[hidden] { display: none !important; }

@@ -1,4 +1,4 @@
-CronoLeitura v2.16 (PWA)
+CronoLeitura v2.17 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -76,22 +76,23 @@ BIBLIOTECA
   Na grade, toque na capa para ler; "Editar" abaixo de cada livro.
 
 CAPAS (sem servidor)
-- TROCAR CAPA COM UM TOQUE: toque na capa do livro (aba Ler) ou do audiobook (aba Áudio).
-  Aparecem todas as capas encontradas; toque na certa e ela é aplicada e salva na hora.
-- No cadastro/edição, tocar numa capa também aplica na hora (num cadastro novo ela entra
-  junto ao tocar em Salvar).
-- "Pesquisar na internet": mostra DENTRO do app as imagens do Bing, DuckDuckGo e Google para
-  "título autor audiobook capa". Toque na imagem certa: o app baixa e aplica a capa (como o
-  Smart AudioBook Player). Se o site da imagem estiver fora do ar, usa a miniatura da busca.
-- "Buscar capa": catálogos primeiro (Audible, Apple Books, Google Livros, Amazon pelo ISBN,
-  Open Library) e depois as imagens da internet. Campo próprio para título, autor ou ISBN.
-  A linha de cima mostra quantas imagens vieram de cada fonte.
-- "Colar capa": copie uma imagem (ou o endereço dela) em qualquer site e cole aqui.
-- Se o site da imagem não deixar copiar, o app baixa pelo wsrv.nl (proxy gratuito de imagens).
-- No cadastro do livro: "Buscar capa" mostra capas de Amazon (pelo ISBN), Google Livros e Open
-  Library. Toque na certa: ela é reduzida e SALVA NO CELULAR (aparece offline e vai no backup).
-- "Foto / galeria": tire foto da capa ou escolha uma imagem (ex.: print da capa no Google).
-- Se um site não deixar copiar a imagem, o app guarda o link e mantém uma cópia em cache.
+- Toque na capa do livro (aba Ler) ou do audiobook (aba Áudio), ou em "Procurar capa na
+  internet" no cadastro. Abre em tela cheia com as capas encontradas (Audible, Apple Books,
+  Google Livros, Amazon, Open Library, Bing, DuckDuckGo, Google) para título + autor.
+- Toque numa imagem: ela aumenta e é baixada; quando aparecer o botão azul ✓, toque nele.
+  A capa é aplicada, salva no celular e você volta ao app (como no Smart AudioBook Player).
+- Também na tela: "Foto / galeria" e "Colar imagem copiada".
+- As capas aparecem inteiras (livro 2:3 ou audiobook quadrado), sem cortar.
+
+KINDLE: CONTAGEM POR POSIÇÃO
+- No cadastro do livro escolha "Contagem: Posição (Kindle)". Total e posição atual como o
+  Kindle mostra no rodapé: "Pos. 241 de 10.483" (pontos de milhar aceitos; "Colar do Kindle").
+- Lendo: "Atualizar posição" quando parar (e "Encerrar" pergunta a posição). O app mede
+  posições/hora e calcula o tempo restante no livro; informe onde o capítulo termina para ver
+  "X min restantes no capítulo".
+- Uma posição do Kindle é um trecho fixo de texto (não muda com o tamanho da letra). Para metas
+  e hábitos em páginas, o app converte: posições ÷ 16 (média), ou pelo nº de páginas do livro
+  impresso, se você informar.
 
 DESEMPENHO
 - Se o celular ainda travar: Histórico > Preferências > desmarque "Efeitos de luz".

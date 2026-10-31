@@ -73,6 +73,9 @@ function newBook(o) {
     edition: (o.edition || '').trim(),
     year: o.year ? String(o.year) : '',
     source: o.source || 'manual',
+    unit: o.unit === 'loc' ? 'loc' : 'page',
+    printPages: Math.max(0, Math.round(+o.printPages) || 0),
+    chapterEnd: 0,
     addedAt: Date.now(),
     segments: [],
     daily: {},
@@ -146,8 +149,19 @@ function save() {
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
 const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
 const anyById = (id) => bookById(id) || audioById(id);
-const APP_VERSION = '2.16.0';
+const APP_VERSION = '2.17.0';
 const DEVELOPER = 'Robert Simão dos Santos';
+/* Kindle: livros sem número de página usam "posição" (pos. 241 de 10.483). Uma posição é um
+ * trecho fixo do texto (≈128 bytes), igual em qualquer tamanho de letra. Para metas e hábitos
+ * em páginas, converte: posições ÷ (posições por página). Sem o nº de páginas impressas,
+ * usa ≈ 16 posições por página (média comum de livros do Kindle). */
+const LOC_PER_PAGE = 16;
+const isLoc = (b) => !!b && b.unit === 'loc';
+const locPerPage = (b) => (isLoc(b) && b.printPages > 0 ? b.totalPages / b.printPages : LOC_PER_PAGE);
+const unitK = (b) => (isLoc(b) ? 1 / locPerPage(b) : 1); // páginas equivalentes por unidade
+const uWord = (b, n) => (isLoc(b) ? (n === 1 ? 'posição' : 'posições') : (n === 1 ? 'página' : 'páginas'));
+const posTxt = (b) => (isLoc(b) ? 'pos. ' + nfmt(b.currentPage) : 'página ' + b.currentPage);
+const intOf = (v) => { const n = parseInt(String(v == null ? '' : v).replace(/\D+/g, ''), 10); return isFinite(n) ? n : NaN; };
 const activeBook = () => bookById(S.activeBookId);
 
 /* ======================= cronômetro ======================= */
@@ -233,7 +247,7 @@ function endSession(finishedBook) {
   if (b) b.carrySec = finishedBook ? 0 : Math.round(carry * 10) / 10;
   if (b && totalSec >= 5) {
     // registro da sessão para o monitor de hábitos (início, fim, tempo ativo, páginas, livro)
-    S.log.push({ id: t.sessionId, bookId: b.id, start: t.startedAt || Date.now() - totalSec * 1000, end: Date.now(), sec: Math.round(totalSec), pages });
+    S.log.push({ id: t.sessionId, bookId: b.id, start: t.startedAt || Date.now() - totalSec * 1000, end: Date.now(), sec: Math.round(totalSec), pages: Math.round(pages * unitK(b) * 10) / 10 });
     if (S.log.length > 6000) S.log.splice(0, S.log.length - 6000);
   }
   S.timer = idleTimer();
@@ -243,10 +257,12 @@ function endSession(finishedBook) {
 }
 function stopReading() {
   if (S.timer.status === 'idle') return;
+  S.lastStopBook = S.timer.bookId;
   bell('stop');
   const r = endSession(false);
   renderRead();
-  toast(r.pages > 0 ? 'Sessão encerrada: ' + nfmt(r.pages) + (r.pages === 1 ? ' página' : ' páginas') + ' em ' + fmtDur(r.totalSec) + '.' : 'Sessão encerrada.');
+  const sb = bookById(S.lastStopBook);
+  toast(r.pages > 0 ? 'Sessão encerrada: ' + nfmt(r.pages) + ' ' + uWord(sb, r.pages) + ' em ' + fmtDur(r.totalSec) + '.' : 'Sessão encerrada.');
 }
 
 let lastLapAt = 0;
@@ -308,7 +324,7 @@ function jumpTo(q) {
     t.lastLapMs = activeNow();
     t.carryMs = 0;
     save(); renderRead();
-    toast('Página ajustada para ' + q + ' (sem registrar tempo).');
+    toast((isLoc(b) ? 'Posição ajustada para ' + nfmt(q) : 'Página ajustada para ' + q) + ' (sem registrar tempo).');
     return;
   }
   const pages = q - b.currentPage;
@@ -339,15 +355,16 @@ function paceOf(list, basis) {
 function bookPace(b) {
   const own = paceOf(allSegs(b), S.settings.paceBasis);
   if (own) return Object.assign({ src: 'book' }, own);
-  const all = S.books.flatMap(allSegs).sort((a, c) => a.ts - c.ts);
+  // outros livros: ritmo em segundos por página equivalente, convertido para a unidade deste livro
+  const all = S.books.flatMap((x) => allSegs(x).map((g) => ({ ts: g.ts, sec: g.sec, pages: g.pages * unitK(x) }))).sort((a, c) => a.ts - c.ts);
   const g = paceOf(all, S.settings.paceBasis);
-  return g ? Object.assign({ src: 'global' }, g) : null;
+  return g ? { src: 'global', spp: g.spp * unitK(b), pages: g.pages / unitK(b) } : null;
 }
 /* tempo restante = (páginas restantes − a atual) × ritmo + o que falta da página atual */
 function estimate(b, pace, pageSec) {
   if (!pace || b.finished) return null;
-  const rem = b.totalPages - b.currentPage + 1;
-  const remSec = Math.max(0, (rem - 1) * pace.spp + Math.max(0, pace.spp - pageSec));
+  const rem = isLoc(b) ? b.totalPages - b.currentPage : b.totalPages - b.currentPage + 1;
+  const remSec = isLoc(b) ? Math.max(0, rem * pace.spp) : Math.max(0, (rem - 1) * pace.spp + Math.max(0, pace.spp - pageSec));
   const goal = b.dailyGoalMin * 60;
   const left = Math.max(0, goal - bookTodaySec(b));
   const daysAfter = remSec > left ? Math.ceil((remSec - left) / goal) : 0;
@@ -400,16 +417,23 @@ function renderRead() {
   const t = S.timer;
   const mine = sessionMine(b);
   const state = mine ? t.status : 'idle';
-  const done = b.finished ? b.totalPages : b.currentPage - 1;
+  const loc = isLoc(b);
+  const done = b.finished ? b.totalPages : loc ? b.currentPage : b.currentPage - 1;
   const pct = clamp((done / b.totalPages) * 100, 0, 100);
-  const rem = b.finished ? 0 : b.totalPages - b.currentPage + 1;
+  const rem = b.finished ? 0 : loc ? b.totalPages - b.currentPage : b.totalPages - b.currentPage + 1;
   const lastPage = b.currentPage >= b.totalPages;
 
   let actions = '';
   if (b.finished) {
     actions = '<div class="finished-banner">Livro concluído! Tempo total de leitura: ' + esc(fmtDur(b.timeSec)) + '</div>';
   } else if (state === 'idle') {
-    actions = pomoButton('start', ICON.play + ' Começar a ler (página ' + b.currentPage + ')', 'xl');
+    actions = pomoButton('start', ICON.play + ' Começar a ler (' + posTxt(b) + ')', 'xl');
+  } else if (state === 'running' && loc) {
+    actions =
+      pomoButton('jump', 'Atualizar posição', 'xxl') +
+      '<div class="btn-row"><button class="btn" type="button" data-act="pause">' + ICON.pause + ' Pausar</button>' +
+      '<button class="btn" type="button" data-act="stopLoc">' + ICON.stop + ' Encerrar</button></div>' +
+      '<div class="btn-row"><button class="btn ghost sm" type="button" data-act="undo">' + ICON.undo + ' Desfazer</button></div>';
   } else if (state === 'running') {
     actions =
       pomoButton('lap', lastPage ? ICON.check + ' Terminei o livro' : 'Cheguei na página ' + (b.currentPage + 1), 'xxl') +
@@ -420,14 +444,14 @@ function renderRead() {
   } else {
     actions =
       pomoButton('start', ICON.play + ' Continuar a leitura', 'xl') +
-      '<div class="btn-row"><button class="btn" type="button" data-act="stop">' + ICON.stop + ' Encerrar</button>' +
+      '<div class="btn-row"><button class="btn" type="button" data-act="' + (loc ? 'stopLoc' : 'stop') + '">' + ICON.stop + ' Encerrar</button>' +
       '<button class="btn ghost" type="button" data-act="undo">' + ICON.undo + ' Desfazer</button></div>';
   }
 
   const label = b.finished ? 'Leitura concluída'
-    : state === 'running' ? 'Lendo a página ' + b.currentPage
-    : state === 'paused' ? 'Pausado na página ' + b.currentPage
-    : 'Pronto para começar na página ' + b.currentPage;
+    : state === 'running' ? (loc ? 'Lendo · pos. ' + nfmt(b.currentPage) : 'Lendo a página ' + b.currentPage)
+    : state === 'paused' ? 'Pausado na ' + posTxt(b)
+    : 'Pronto para começar na ' + posTxt(b);
 
   const select = S.books.length > 1
     ? '<div class="switch"><label for="bookSwitch">Livro</label><select id="bookSwitch" data-change="switch"' + (t.status !== 'idle' ? ' disabled' : '') + '>' +
@@ -439,15 +463,16 @@ function renderRead() {
       '<div class="book-hero"><button type="button" class="cover-btn" data-act="coverDlg" data-id="' + esc(b.id) + '" aria-label="Trocar capa">' + coverHtml(coverSrc(b)) + '<span class="cover-edit">Trocar capa</span></button>' +
         '<div class="hero-info"><h2>' + esc(b.title) + '</h2><p class="muted">' + esc(b.author || 'Autor não informado') + '</p>' +
         (edLine(b) ? '<p class="muted ed-line">' + esc(edLine(b)) + '</p>' : '') +
-        '<div class="pageline">Página <strong>' + b.currentPage + '</strong> de ' + b.totalPages + '</div></div></div>' +
+        (loc ? '<div class="pageline">Pos. <strong>' + nfmt(b.currentPage) + '</strong> de ' + nfmt(b.totalPages) + ' · <strong>' + Math.floor(pct) + '%</strong></div><p class="muted ed-line">Kindle · contagem por posição</p>'
+          : '<div class="pageline">Página <strong>' + b.currentPage + '</strong> de ' + b.totalPages + '</div>') + '</div></div>' +
       '<div class="progress" role="progressbar" aria-label="Progresso do livro" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct) + '"><div style="width:' + pct.toFixed(1) + '%"></div></div>' +
-      '<div class="progress-meta"><span>' + pct.toFixed(1).replace('.', ',') + '% concluído</span><span>Faltam ' + rem + (rem === 1 ? ' página' : ' páginas') + '</span></div>' +
+      '<div class="progress-meta"><span>' + pct.toFixed(1).replace('.', ',') + '% concluído</span><span>Faltam ' + nfmt(rem) + ' ' + uWord(b, rem) + (loc ? ' (≈ ' + nfmt(Math.round(rem * unitK(b))) + ' págs.)' : '') + '</span></div>' +
       select +
     '</div>' +
     '<div class="card timer-card" data-state="' + state + '">' +
       '<div class="timer-label">' + esc(label) + '</div>' +
       '<div class="timer-clock" id="tClock" aria-live="off">00:00</div>' +
-      (mine ? '<div class="timer-sub"><span>Sessão <b id="tSession">00:00</b></span><span>Páginas <b id="tPages">0</b></span></div>' : '<div class="timer-sub">tempo na página atual</div>') +
+      (mine ? '<div class="timer-sub"><span>Sessão <b id="tSession">00:00</b></span><span>' + (loc ? 'Posições' : 'Páginas') + ' <b id="tPages">0</b></span></div>' : '<div class="timer-sub">' + (loc ? 'tempo desde a última posição' : 'tempo na página atual') + '</div>') +
       '<div class="timer-actions">' + actions + '</div>' +
       (b.finished ? '' : pomoSelectHtml()) +
     '</div>' +
@@ -475,6 +500,7 @@ function updateClock() {
   if (sessionMine(b)) {
     setText('#tSession', fmtClock(activeNow()));
     setText('#tPages', nfmt(b.currentPage - S.timer.startPage));
+    if (isLoc(b)) setText('#tClock', fmtClock(activeNow()));
   }
 }
 function fillMetrics() {
@@ -496,11 +522,19 @@ function fillMetrics() {
     setText('#mDate', '—'); setText('#mDateSub', '');
   } else {
     setText('#mRem', fmtDur(est.remSec, true));
-    setText('#mRemSub', est.rem + (est.rem === 1 ? ' página restante' : ' páginas restantes'));
+    if (isLoc(b)) {
+      const ch = b.chapterEnd > b.currentPage ? fmtDur((b.chapterEnd - b.currentPage) * pace.spp, true) + ' restantes no capítulo · ' : '';
+      setText('#mRemSub', ch + 'no livro · ' + nfmt(est.rem) + ' posições');
+    } else setText('#mRemSub', est.rem + (est.rem === 1 ? ' página restante' : ' páginas restantes'));
     setText('#mDate', est.daysAfter === 0 ? 'Hoje' : fmtDate(est.date));
     setText('#mDateSub', '≈ ' + est.readDays + (est.readDays === 1 ? ' dia' : ' dias') + ' de leitura · ' + b.dailyGoalMin + ' min/dia');
   }
-  if (pace) {
+  if (pace && isLoc(b)) {
+    setText('#mPace', nfmt(Math.round(3600 / pace.spp)) + ' pos./h');
+    setText('#mPaceSub', '≈ ' + nfmt(Math.round(3600 / (pace.spp * locPerPage(b)))) + ' págs/h');
+    setText('#mNote', 'Baseado em ' + nfmt(Math.round(pace.pages)) + ' posições medidas ' + (pace.src === 'book' ? 'neste livro.' : 'em outros livros (convertidas) — fica mais preciso conforme você lê este.') +
+      ' Ao parar, toque em “Atualizar posição” e digite a posição que o Kindle mostra.' + (b.printPages ? '' : ' Páginas ≈ posições ÷ ' + LOC_PER_PAGE + '.'));
+  } else if (pace) {
     setText('#mPace', fmtDur(pace.spp) + '/pág');
     setText('#mPaceSub', nfmt(3600 / pace.spp) + ' págs/h');
     const basis = S.settings.paceBasis === 'recent' ? ' recentes' : '';
@@ -509,7 +543,8 @@ function fillMetrics() {
       ' A estimativa se atualiza a cada página e supõe leitura todos os dias.');
   } else {
     setText('#mPace', '—'); setText('#mPaceSub', '');
-    setText('#mNote', 'Toque em “Começar a ler” e marque “Cheguei na página…” a cada virada de página. O cálculo aparece a partir da primeira página medida.');
+    setText('#mNote', isLoc(b) ? 'Toque em “Começar a ler”, leia no Kindle e, ao parar, toque em “Atualizar posição” com o número que o Kindle mostra (pos. 241 de 10.483). O cálculo aparece a partir da primeira atualização.'
+      : 'Toque em “Começar a ler” e marque “Cheguei na página…” a cada virada de página. O cálculo aparece a partir da primeira página medida.');
   }
 }
 function tick() {
@@ -1341,16 +1376,16 @@ async function itunesCovers(q, audio) {
 async function openCoverSearch(qOverride, webFirst) {
   const grid = $('#coverGrid');
   if (!grid) return;
-  const audio = coverIsAudio();
+  const pc = pickCtx || {};
+  const audio = !!pc.audio;
   const typedQ = qOverride != null ? String(qOverride).trim() : '';
-  let title = typedQ || (($('#f-title') || {}).value || '').trim();
-  const author = typedQ ? '' : (($('#f-author') || {}).value || '').trim().split(',')[0];
-  let isbn = typedQ ? '' : (($('input[name="isbn"]') || {}).value || '').trim();
-  const qVal = typedQ || [title, author].filter(Boolean).join(' ') || isbn;
-  const box = '<div class="cover-q"><input id="coverQ" type="search" enterkeyhint="search" placeholder="Título, autor ou ISBN" value="' + esc(qVal) + '">' +
-    '<button type="button" class="btn sm primary" data-act="coverQ">' + ICON.search + ' Buscar</button></div>';
+  let title = typedQ || pc.title || '';
+  const author = typedQ ? '' : String(pc.author || '').split(',')[0].trim();
+  let isbn = typedQ ? '' : String(pc.isbn || '').trim();
+  const qi0 = $('#coverQ'); if (qi0 && typedQ) qi0.value = typedQ;
+  const box = '';
   grid.hidden = false;
-  if (!title && !isbn) { grid.innerHTML = box + '<p class="hint">Digite o título (ou o ISBN) e toque em Buscar.</p>'; const q = $('#coverQ'); if (q) q.focus(); return; }
+  if (!title && !isbn) { grid.innerHTML = '<p class="hint">Digite o título (ou o ISBN) e toque em Buscar.</p>'; const q = $('#coverQ'); if (q) q.focus(); return; }
   if (!navigator.onLine) { toast('Sem internet: use "Foto / galeria".'); return; }
   const qi = isbnOf(title);
   if (qi) { isbn = qi; title = ''; }
@@ -1375,12 +1410,11 @@ async function openCoverSearch(qOverride, webFirst) {
     const list = items.slice().sort((a, b) => order(a.src) - order(b.src));
     const diag = SRC.map(([n]) => '<span class="' + (st[n] == null ? 'wait' : st[n] ? 'ok' : 'none') + '">' + esc(n) + (st[n] == null ? ' …' : ': ' + st[n]) + '</span>').join('');
     grid.innerHTML = box + '<p class="cover-diag">' + diag + '</p>' +
-      (list.length ? '<p class="hint">' + list.length + (list.length === 1 ? ' capa encontrada' : ' capas encontradas') + '. Toque na certa: ela é aplicada na hora.</p><div class="cover-opts' + (audio ? ' sq' : '') + '">' +
+      (list.length ? '<p class="hint">' + list.length + (list.length === 1 ? ' capa encontrada' : ' capas encontradas') + '. Toque numa capa para aumentá-la.</p><div class="cover-opts">' +
         list.map((c) => '<button type="button" class="cover-opt" data-act="coverPick" data-url="' + esc(c.url) + '" data-thumb="' + esc(c.thumb || c.url) + '" title="' + esc(c.src) + '">' +
           '<img class="opt-img" src="' + esc(c.thumb || c.url) + '" alt="Capa (' + esc(c.src) + ')" loading="lazy" referrerpolicy="no-referrer"><span>' + esc(c.src) + '</span></button>').join('') + '</div>' : '') +
       (running ? '<div class="status-line"><div class="spinner"></div>Procurando em ' + running + (running === 1 ? ' fonte' : ' fontes') + '…</div>'
-        : !list.length ? '<div class="status-line">Nenhuma imagem encontrada. Tente outro termo (só o título), "Colar capa" ou "Foto / galeria".</div>' : '') +
-      '<p class="hint cover-more">Não achou? <a href="https://www.google.com/search?tbm=isch&q=' + encodeURIComponent(webQ) + '" target="_blank" rel="noopener">Abrir no Google Imagens</a>, toque e segure na imagem › "Copiar imagem" e use "Colar capa".</p>';
+        : !list.length ? '<div class="status-line">Nenhuma imagem encontrada. Tente só o título, ou use “Foto / galeria”.</div>' : '');
     grid.querySelectorAll('.opt-img').forEach((img) => {
       const drop = () => { const b = img.closest('.cover-opt'); if (b) { b.remove(); const i = items.findIndex((x) => x.url === b.dataset.url); if (i >= 0) items.splice(i, 1); } };
       if (img.complete && img.naturalWidth && img.naturalWidth < 40) drop();
@@ -1389,7 +1423,6 @@ async function openCoverSearch(qOverride, webFirst) {
     });
   };
   paint();
-  try { grid.scrollIntoView({ block: 'start', behavior: 'smooth' }); } catch (e) { /* segue */ }
   SRC.forEach(([name, fn]) => {
     Promise.resolve().then(fn).catch(() => []).then((l) => {
       if (seq !== coverSeq) return;
@@ -1400,27 +1433,72 @@ async function openCoverSearch(qOverride, webFirst) {
     });
   });
 }
-function openCoverDialog(id) {
-  const it = anyById(id);
-  if (!it) return;
-  const audio = !!audioById(id);
-  pendingCover = null;
-  openDialog('<div class="dlg-body" data-cover-for="' + esc(id) + '" data-cover-kind="' + (audio ? 'audio' : 'book') + '">' +
-    '<h2 id="dlgTitle">Trocar capa</h2><p class="muted">' + esc(it.title) + (it.author ? ' · ' + esc(it.author) : '') + '</p>' +
-    '<input type="hidden" id="f-title" value="' + esc(it.title) + '"><input type="hidden" id="f-author" value="' + esc(it.author || '') + '">' +
-    '<input type="hidden" name="isbn" value="' + esc(it.isbn || '') + '"><input type="hidden" name="cover" value="' + esc(it.cover || '') + '">' +
-    '<div class="dlg-cover"><div id="dlgCoverImg">' + coverHtml(coverSrc(it), audio ? 'sq' : '') + '</div>' +
-      '<div class="dlg-cover-side"><span class="muted" id="dlgCoverNote">Toque numa capa abaixo: ela é aplicada na hora.</span>' +
-      '<div class="dlg-cover-btns"><button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button>' +
-      '<button type="button" class="btn sm ghost" data-act="coverPaste">' + ICON.paste + ' Colar capa</button></div></div></div>' +
+/* ---------- "Procurar capa na internet" (como no Smart AudioBook Player) ----------
+ * Abre em tela cheia com os resultados para título + autor. Tocar numa imagem a aumenta e
+ * baixa; quando está pronta aparece o botão azul ✓. Confirmar aplica a capa e volta. */
+let pickCtx = null;
+let pvChoice = null;
+function openCoverPicker(id) {
+  let c;
+  const item = id ? anyById(id) : null;
+  if (item) c = { id, audio: !!audioById(id), title: item.title, author: item.author || '', isbn: item.isbn || '' };
+  else {
+    const f = $('#dlg[open] form[data-form="audio"], #dlg[open] form[data-form="book"]');
+    if (!f) return;
+    c = { id: f.dataset.id || '', audio: f.dataset.form === 'audio', title: ((f.querySelector('#f-title') || {}).value || '').trim(),
+      author: ((f.querySelector('#f-author') || {}).value || '').trim(), isbn: ((f.querySelector('input[name="isbn"]') || {}).value || '').trim() };
+  }
+  if (!c.title && !c.isbn) { toast('Digite o título primeiro.'); const t = $('#f-title'); if (t) t.focus(); return; }
+  pickCtx = c;
+  pvChoice = null;
+  const q = [c.title, String(c.author).split(',')[0].trim()].filter(Boolean).join(' ') || c.isbn;
+  const d = $('#pick');
+  d.innerHTML = '<div class="pick-head"><button type="button" class="pick-back" data-act="pickClose" aria-label="Voltar">←</button><h2 id="pickTitle">Procurar capa na internet</h2></div>' +
+    '<p class="pick-tip">Toque na imagem para aumentá-la. Aguarde o botão de confirmação.</p>' +
+    '<div class="cover-q"><input id="coverQ" type="search" enterkeyhint="search" placeholder="Título, autor ou ISBN" value="' + esc(q) + '">' +
+      '<button type="button" class="btn sm primary" data-act="coverQ">' + ICON.search + ' Buscar</button></div>' +
     '<div id="coverGrid" class="cover-grid"></div>' +
-    '<div class="dlg-actions"><button type="button" class="btn" data-act="closeDlg">Fechar</button></div></div>');
-  openCoverSearch(null, false);
+    '<div class="pick-foot"><button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button>' +
+      '<button type="button" class="btn sm ghost" data-act="coverPaste">' + ICON.paste + ' Colar imagem copiada</button></div>' +
+    '<div class="pick-view" id="pickView" hidden></div>';
+  if (!d.open) d.showModal();
+  d.scrollTop = 0;
+  openCoverSearch(q);
 }
-function openGoogleImages() {
-  const t = (($('#f-title') || {}).value || '').trim();
-  if (!t) { toast('Digite o título primeiro.'); const f = $('#f-title'); if (f) f.focus(); return; }
-  openCoverSearch(null, true);
+function closePicker() { const d = $('#pick'); if (d && d.open) d.close(); pvChoice = null; }
+async function previewCover(url, thumb) {
+  const v = $('#pickView');
+  if (!v) return;
+  const token = {};
+  pvChoice = { url, token };
+  v.hidden = false;
+  v.innerHTML = '<div class="pv-top"><button type="button" class="pick-back" data-act="pickBack" aria-label="Voltar aos resultados">←</button><span id="pvMsg">Baixando a imagem… aguarde o botão de confirmação.</span></div>' +
+    '<div class="pv-img"><img id="pvImg" src="' + esc(thumb || url) + '" alt="Capa ampliada" referrerpolicy="no-referrer"></div>' +
+    '<button type="button" class="pv-ok" id="pvOk" data-act="pickConfirm" aria-label="Usar esta capa" hidden>✓</button>';
+  let blob = await grabImage(url);
+  if (!blob && thumb && thumb !== url) blob = await grabImage(thumb);
+  if (!pvChoice || pvChoice.token !== token) return;
+  pvChoice.blob = blob;
+  pvChoice.src = blob ? URL.createObjectURL(blob) : (thumb || url);
+  const im = $('#pvImg'); if (im && blob) im.src = pvChoice.src;
+  setText('#pvMsg', blob ? 'Pronto. Toque no botão azul para usar esta capa.' : 'Este site não deixa copiar a imagem; será guardado o link. Toque no botão azul para usar.');
+  const ok = $('#pvOk'); if (ok) ok.hidden = false;
+}
+function confirmPick() {
+  const ch = pvChoice;
+  if (!ch || !ch.src) return;
+  const ctxId = pickCtx ? pickCtx.id : '';
+  pendingCover = ch.blob ? { blob: ch.blob, url: ch.url } : { url: ch.url };
+  closePicker();
+  const c = $('#dlg[open] input[name="cover"]'); if (c) c.value = ch.url;
+  commitCover(ch.src, ctxId);
+}
+/* foto/galeria ou imagem colada dentro do seletor: fecha e aplica */
+function finishCoverChoice(src) {
+  const inPicker = $('#pick') && $('#pick').open;
+  const ctxId = inPicker && pickCtx ? pickCtx.id : undefined;
+  if (inPicker) closePicker();
+  commitCover(src, ctxId);
 }
 function imgUrlFromText(text) {
   const m = String(text || '').match(/https?:\/\/[^\s<>"']+/i);
@@ -1433,7 +1511,7 @@ async function useCoverBlob(blob) {
   const jpg = await fileToJpeg(blob);
   if (!jpg) { toast('Não consegui abrir essa imagem.'); return false; }
   pendingCover = { blob: jpg, url: '' };
-  commitCover(URL.createObjectURL(jpg));
+  finishCoverChoice(URL.createObjectURL(jpg));
   return true;
 }
 async function pasteCover() {
@@ -1450,13 +1528,11 @@ async function pasteCover() {
   } catch (e) { /* sem permissão para imagens: tenta texto */ }
   if (!text) { try { text = navigator.clipboard && navigator.clipboard.readText ? await navigator.clipboard.readText() : ''; } catch (e) { text = ''; } }
   const u = imgUrlFromText(text);
-  if (!u) { toast('Copie a imagem (ou o endereço da imagem) antes de tocar em "Colar capa".'); return; }
-  pickCover(u);
+  if (!u) { toast('Copie uma imagem (ou o endereço dela) antes de colar.'); return; }
+  if ($('#pick') && $('#pick').open) previewCover(u, u); else pickCover(u);
 }
-const coverBtnsHtml = () => '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Buscar capa</button>' +
-  '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button>' +
-  '<button type="button" class="btn sm ghost" data-act="coverGoogle">' + ICON.search + ' Pesquisar na internet</button>' +
-  '<button type="button" class="btn sm ghost" data-act="coverPaste">' + ICON.paste + ' Colar capa</button></div>';
+const coverBtnsHtml = () => '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Procurar capa na internet</button>' +
+  '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button></div>';
 function showPendingPreview(src, note) {
   const box = $('#dlgCoverImg');
   if (box) box.innerHTML = coverHtml(src);
@@ -1466,27 +1542,22 @@ function showPendingPreview(src, note) {
 const coverIsAudio = () => !!$('#dlg form[data-form="audio"], #dlg [data-cover-kind="audio"]');
 /* aplica a capa escolhida na hora: no livro/audiobook já salvo vai direto para ele; num
  * cadastro novo fica escolhida e entra junto ao tocar em Salvar. */
-function commitCover(previewSrc) {
-  const host = $('#dlg [data-cover-for]');
-  const form = $('#dlg form[data-form="audio"], #dlg form[data-form="book"]');
-  const id = host ? host.dataset.coverFor : (form && form.dataset.id) || '';
+function commitCover(previewSrc, id) {
+  const form = $('#dlg[open] form[data-form="audio"], #dlg[open] form[data-form="book"]');
+  if (id == null) id = (form && form.dataset.id) || '';
   const item = id ? anyById(id) : null;
-  const grid = $('#coverGrid');
-  if (grid) { grid.hidden = true; grid.innerHTML = ''; }
   if (item) {
     applyPendingCover(item);
-    const c = $('input[name="cover"]'); if (c) c.value = item.cover || '';
+    const c = form && form.dataset.id === id ? form.querySelector('input[name="cover"]') : null;
+    if (c) c.value = item.cover || '';
     renderCurrent();
-    if (host) { closeDialog(); toast('Capa aplicada ✓'); return; }
-    showPendingPreview(coverSrc(item) || previewSrc, 'Capa aplicada ✓');
+    if (form && form.dataset.id === id) showPendingPreview(coverSrc(item) || previewSrc, 'Capa aplicada ✓');
     toast('Capa aplicada ✓');
   } else {
     showPendingPreview(previewSrc, 'Capa escolhida ✓ Ela entra junto ao tocar em Salvar.');
   }
 }
 async function pickCover(url, thumb) {
-  const grid = $('#coverGrid');
-  if (grid) grid.querySelectorAll('.cover-opt').forEach((b) => b.classList.toggle('sel', b.dataset.url === url));
   showPendingPreview(thumb || url, 'Baixando a capa…');
   let blob = await grabImage(url);
   if (!blob && thumb && thumb !== url) blob = await grabImage(thumb);
@@ -1499,7 +1570,7 @@ function pickCoverFile() {
     const blob = await fileToJpeg(f);
     if (!blob) { toast('Não consegui abrir essa imagem.'); return; }
     pendingCover = { blob, url: '' };
-    commitCover(URL.createObjectURL(blob));
+    finishCoverChoice(URL.createObjectURL(blob));
   });
 }
 
@@ -1508,9 +1579,9 @@ function renderBooks() {
   const el = $('#view-books');
   const grid = S.settings.libView === 'grid';
   const items = S.books.map((b) => {
-    const done = b.finished ? b.totalPages : b.currentPage - 1;
+    const done = b.finished ? b.totalPages : isLoc(b) ? b.currentPage : b.currentPage - 1;
     const pct = clamp((done / b.totalPages) * 100, 0, 100);
-    const status = b.finished ? 'Concluído' : 'Pág. ' + b.currentPage + ' de ' + b.totalPages;
+    const status = b.finished ? 'Concluído' : isLoc(b) ? 'Pos. ' + nfmt(b.currentPage) + ' de ' + nfmt(b.totalPages) : 'Pág. ' + b.currentPage + ' de ' + b.totalPages;
     if (grid) {
       return '<article class="book-tile' + (b.id === S.activeBookId ? ' active' : '') + '">' +
         '<button type="button" class="tile-cover" data-act="read" data-id="' + esc(b.id) + '" aria-label="Ler ' + esc(b.title) + '">' + coverHtml(coverSrc(b), 'tile') +
@@ -1572,11 +1643,8 @@ function openBookDialog(prefill, editId) {
       '<div class="dlg-cover"><div id="dlgCoverImg">' + coverHtml(b ? coverSrc(b) : v.cover) + '</div>' +
         '<div class="dlg-cover-side"><span class="muted" id="dlgCoverNote">' + coverNote(b, v) + '</span>' +
         coverBtnsHtml() + '</div></div>' +
-      '<div id="coverGrid" class="cover-grid" hidden></div>' +
-      '<div class="field-row">' +
-        '<div class="field"><label for="f-total">Total de páginas</label><input id="f-total" name="totalPages" type="number" inputmode="numeric" min="1" step="1" required value="' + (v.totalPages || v.pages || '') + '"></div>' +
-        '<div class="field"><label for="f-cur">Página em que estou</label><input id="f-cur" name="currentPage" type="number" inputmode="numeric" min="1" step="1" value="' + (b ? b.currentPage : 1) + '"></div>' +
-      '</div>' + pageNote +
+
+      unitFieldsHtml(b, v) + pageNote +
       '<div class="field"><label for="f-goal">Tempo de leitura por dia (min)</label><input id="f-goal" name="dailyGoalMin" type="number" inputmode="numeric" min="1" max="720" value="' + goal + '"></div>' +
       (b ? '<div class="check field"><input type="checkbox" id="f-fin" name="finished"' + (b.finished ? ' checked' : '') + '><label for="f-fin">Livro concluído</label></div>' +
            '<button type="button" class="btn ghost block" data-act="dlgSearch">' + ICON.search + ' Atualizar páginas pela internet</button><div id="dlgResults" class="results"></div>' : '') +
@@ -1584,13 +1652,42 @@ function openBookDialog(prefill, editId) {
         '<button type="button" class="btn" data-act="closeDlg">Cancelar</button><button type="submit" class="btn primary">Salvar</button></div>' +
     '</form></div>');
 }
+function unitFieldsHtml(b, v) {
+  const loc = (b ? b.unit : v.unit) === 'loc';
+  return '<label>Contagem</label><div class="seg seg-sm unit-seg" role="tablist" aria-label="Contagem">' +
+      '<button type="button" data-act="bookUnit" data-v="page" aria-selected="' + !loc + '">Páginas</button>' +
+      '<button type="button" data-act="bookUnit" data-v="loc" aria-selected="' + loc + '">Posição (Kindle)</button></div>' +
+    '<input type="hidden" name="unit" value="' + (loc ? 'loc' : 'page') + '">' +
+    '<div class="field-row">' +
+      '<div class="field"><label for="f-total" id="l-total">' + (loc ? 'Total de posições' : 'Total de páginas') + '</label><input id="f-total" name="totalPages" type="text" inputmode="numeric" autocomplete="off" required value="' + (v.totalPages || v.pages || '') + '"></div>' +
+      '<div class="field"><label for="f-cur" id="l-cur">' + (loc ? 'Posição em que estou' : 'Página em que estou') + '</label><input id="f-cur" name="currentPage" type="text" inputmode="numeric" autocomplete="off" value="' + (b ? b.currentPage : 1) + '"></div>' +
+    '</div>' +
+    '<div id="locBox"' + (loc ? '' : ' hidden') + '>' +
+      '<p class="hint">No Kindle: toque no rodapé da página até aparecer <b>Pos. 241 de 10.483</b>. Digite (pontos são aceitos) ou copie e toque em “Colar do Kindle”.</p>' +
+      '<button type="button" class="btn sm ghost" data-act="kindlePaste">' + ICON.paste + ' Colar do Kindle</button>' +
+      '<div class="field"><label for="f-print">Páginas do livro impresso (opcional)</label><input id="f-print" name="printPages" type="text" inputmode="numeric" autocomplete="off" placeholder="converte posições em páginas; sem isso usa ≈ 16 posições/página" value="' + ((b && b.printPages) || v.printPages || '') + '"></div>' +
+    '</div>';
+}
+function setBookUnit(u) {
+  const f = $('form[data-form="book"]');
+  if (!f) return;
+  const loc = u === 'loc';
+  f.querySelector('input[name="unit"]').value = loc ? 'loc' : 'page';
+  f.querySelectorAll('[data-act="bookUnit"]').forEach((x) => x.setAttribute('aria-selected', String(x.dataset.v === u)));
+  setText('#l-total', loc ? 'Total de posições' : 'Total de páginas');
+  setText('#l-cur', loc ? 'Posição em que estou' : 'Página em que estou');
+  const box = $('#locBox'); if (box) box.hidden = !loc;
+}
 function submitBook(f) {
   const fd = new FormData(f);
   const title = String(fd.get('title') || '').trim();
-  const total = parseInt(fd.get('totalPages'), 10);
+  const unit = fd.get('unit') === 'loc' ? 'loc' : 'page';
+  const kp = unit === 'loc' ? parseKindle(fd.get('currentPage')) || parseKindle(fd.get('totalPages')) : null;
+  const total = kp ? kp.total : intOf(fd.get('totalPages'));
+  const printPages = Math.max(0, intOf(fd.get('printPages')) || 0);
   if (!title) { toast('Informe o título.'); return; }
-  if (!(total >= 1)) { toast('Informe o total de páginas.'); return; }
-  const cur = clamp(parseInt(fd.get('currentPage'), 10) || 1, 1, total);
+  if (!(total >= 1)) { toast(unit === 'loc' ? 'Informe o total de posições (ex.: 10.483).' : 'Informe o total de páginas.'); return; }
+  const cur = clamp((kp ? kp.cur : intOf(fd.get('currentPage'))) || 1, 1, total);
   const goal = clamp(parseInt(fd.get('dailyGoalMin'), 10) || 30, 1, 720);
   const id = f.dataset.id;
   if (id) {
@@ -1601,7 +1698,7 @@ function submitBook(f) {
     b.title = title; b.author = String(fd.get('author') || '').trim();
     b.publisher = String(fd.get('publisher') || '').trim(); b.edition = String(fd.get('edition') || '').trim();
     if (fd.get('year')) b.year = String(fd.get('year'));
-    b.totalPages = total; b.dailyGoalMin = goal;
+    b.totalPages = total; b.dailyGoalMin = goal; b.unit = unit; b.printPages = unit === 'loc' ? printPages : 0;
     b.cover = safeUrl(String(fd.get('cover') || '')) || b.cover;
     applyPendingCover(b);
     if (cur !== b.currentPage) {
@@ -1614,7 +1711,7 @@ function submitBook(f) {
     return;
   }
   const nb = newBook({
-    title, author: fd.get('author'), totalPages: total, currentPage: cur, dailyGoalMin: goal,
+    title, author: fd.get('author'), totalPages: total, currentPage: cur, dailyGoalMin: goal, unit, printPages,
     cover: fd.get('cover'), isbn: fd.get('isbn'), source: fd.get('source'),
     publisher: fd.get('publisher'), edition: fd.get('edition'), year: fd.get('year')
   });
@@ -1722,7 +1819,7 @@ function allSessions() {
       x.start = Math.min(x.start, g.ts - g.sec * 1000);
       x.end = Math.max(x.end, g.ts);
       x.sec += g.sec;
-      x.pages += g.pages;
+      x.pages += g.pages * unitK(b);
     });
     m.forEach((x) => out.push(x));
   });
@@ -1733,7 +1830,7 @@ function allSessions() {
     const b = bookById(t.bookId);
     const secNow = activeNow() / 1000;
     out.push({ id: t.sessionId, bookId: t.bookId, start: t.startedAt || Date.now() - secNow * 1000, end: Date.now(), sec: secNow,
-      pages: b ? b.segments.filter((g) => g.sessionId === t.sessionId).reduce((a, g) => a + g.pages, 0) : 0, live: true });
+      pages: b ? b.segments.filter((g) => g.sessionId === t.sessionId).reduce((a, g) => a + g.pages, 0) * unitK(b) : 0, live: true });
   }
   return out.filter((x) => x.sec > 0 && isFinite(x.start)).sort((a, b) => a.start - b.start);
 }
@@ -2306,7 +2403,7 @@ function openAudioDialog(editId) {
       '<div class="dlg-cover"><div id="dlgCoverImg">' + coverHtml(a ? coverSrc(a) : v.cover, 'sq') + '</div>' +
         '<div class="dlg-cover-side"><span class="muted" id="dlgCoverNote">' + coverNote(a, v) + '</span>' +
         coverBtnsHtml() + '</div></div>' +
-      '<div id="coverGrid" class="cover-grid" hidden></div>' +
+
       '<div class="field"><label for="f-dur">Duração total</label>' + hmsInputs('dur', a ? a.durationSec : null, 'f-dur') +
         '<p class="hint">Ex.: 6 h 06 min 29 s. Também pode colar 6:06:29 na caixa das horas.</p></div>' +
       '<div class="field"><label for="f-goal">Escuta por dia (min)</label><input id="f-goal" name="dailyGoalMin" type="number" inputmode="numeric" min="1" max="720" value="' + v.dailyGoalMin + '"></div>' +
@@ -2721,8 +2818,8 @@ async function importAudioLink(raw) {
   fillAudioForm(r);
   const got = [r.title && 'título', r.author && 'autor', r.narrator && 'narrador', r.durationSec && 'duração (' + clockHms(r.durationSec) + ')', (r.publisher || r.platform) && 'editora/plataforma', r.cover && 'capa'].filter(Boolean);
   const miss = [!r.author && 'autor', !r.durationSec && 'duração', !r.cover && 'capa'].filter(Boolean);
-  say('✓ Preenchido: ' + esc(got.join(', ')) + '.' + (miss.length ? ' Falta: ' + esc(miss.join(', ')) + ' — complete à mão' + (!r.cover ? ' e toque em "Buscar capa"' : '') + '.' : ' Confira e toque em Salvar.'));
-  if (!r.cover && $('#coverGrid')) openCoverSearch();
+  say('✓ Preenchido: ' + esc(got.join(', ')) + '.' + (miss.length ? ' Falta: ' + esc(miss.join(', ')) + ' — complete à mão' + (!r.cover ? ' e toque em “Procurar capa na internet”' : '') + '.' : ' Confira e toque em Salvar.'));
+
 }
 
 /* ======================= foto de perfil ======================= */
@@ -2824,15 +2921,15 @@ function sessionsList() {
     const k = b.id + '|' + g.sessionId;
     let s = map.get(k);
     if (!s) { s = { key: k, bookId: b.id, sessionId: g.sessionId, title: b.title, ts: g.ts, pages: 0, sec: 0 }; map.set(k, s); }
-    s.pages += g.pages; s.sec += g.sec; s.ts = Math.min(s.ts, g.ts);
+    s.pages += g.pages * unitK(b); s.sec += g.sec; s.ts = Math.min(s.ts, g.ts);
   }));
   return Array.from(map.values()).sort((a, c) => c.ts - a.ts);
 }
 function renderStats() {
   const el = $('#view-stats');
-  const pages = S.books.reduce((a, b) => a + b.segments.reduce((x, g) => x + g.pages, 0), 0);
+  const pages = Math.round(S.books.reduce((a, b) => a + b.segments.reduce((x, g) => x + g.pages * unitK(b), 0), 0));
   const totalSec = S.books.reduce((a, b) => a + (b.timeSec || 0), 0) + unflushedSec();
-  const pace = paceOf(S.books.flatMap(allSegs).sort((a, c) => a.ts - c.ts), 'all');
+  const pace = paceOf(S.books.flatMap((x) => allSegs(x).map((g) => ({ ts: g.ts, sec: g.sec, pages: g.pages * unitK(x) }))).sort((a, c) => a.ts - c.ts), 'all');
   const finished = S.books.filter((b) => b.finished).length;
   const days = last7();
   const max = Math.max(60, ...days.map((x) => x.sec));
@@ -2844,7 +2941,7 @@ function renderStats() {
   const sess = sessionsList().slice(0, 30).map((s) =>
     '<div class="session"><div class="s-main"><div class="s-title">' + esc(s.title) + '</div>' +
     '<div class="s-sub">' + esc(new Date(s.ts).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })) +
-    ' · ' + nfmt(s.pages) + ' págs. · ' + fmtDur(s.sec) + (s.pages > 0 ? ' · ' + fmtDur(s.sec / s.pages) + '/pág' : '') + '</div></div>' +
+    ' · ' + nfmt(Math.round(s.pages * 10) / 10) + ' págs. · ' + fmtDur(s.sec) + (s.pages > 0 ? ' · ' + fmtDur(s.sec / s.pages) + '/pág' : '') + '</div></div>' +
     '<button class="link-btn" type="button" data-act="delSession" data-key="' + esc(s.key) + '">Remover</button></div>'
   ).join('');
   el.innerHTML =
@@ -2943,9 +3040,40 @@ function toast(msg, action) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(hideToast, action ? 8000 : 3800);
 }
+function parseKindle(text) {
+  const t = String(text || '');
+  const m = t.match(/pos(?:i[cç][aã]o|ition|\.)?\s*([\d.,\s]+?)\s*(?:de|of|\/)\s*([\d.,]+)/i);
+  return m ? { cur: intOf(m[1]), total: intOf(m[2]) } : null;
+}
+function openLocDialog(stopAfter) {
+  const b = activeBook();
+  if (!b || !sessionMine(b)) return;
+  openDialog('<div class="dlg-body"><h2 id="dlgTitle">' + (stopAfter ? 'Encerrar: em que posição parou?' : 'Atualizar posição') + '</h2>' +
+    '<p class="muted">No Kindle aparece embaixo da página, por exemplo <b>Pos. 241 de 10.483</b> (toque no rodapé até mostrar “Posição”).</p>' +
+    '<form data-form="loc" data-stop="' + (stopAfter ? '1' : '') + '">' +
+    '<div class="field"><label for="f-pos">Posição atual</label><input id="f-pos" name="pos" type="text" inputmode="numeric" autocomplete="off" placeholder="ex.: 241" value="' + nfmt(b.currentPage) + '" required></div>' +
+    '<div class="field"><label for="f-chap">Capítulo termina na posição (opcional)</label><input id="f-chap" name="chap" type="text" inputmode="numeric" autocomplete="off" placeholder="para mostrar o tempo restante no capítulo" value="' + (b.chapterEnd > b.currentPage ? nfmt(b.chapterEnd) : '') + '"></div>' +
+    '<p class="hint">Pode colar o texto do Kindle (“pos. 241 de 10.483”). Pontos de milhar são aceitos.</p>' +
+    '<div class="dlg-actions"><button type="button" class="btn" data-act="closeDlg">Cancelar</button><button type="submit" class="btn primary">' + (stopAfter ? 'Salvar e encerrar' : 'Confirmar') + '</button></div></form></div>');
+  setTimeout(() => { const i = $('#f-pos'); if (i) { i.focus(); i.select(); } }, 50);
+}
+function submitLoc(f) {
+  const fd = new FormData(f);
+  const b = activeBook();
+  if (!b) return;
+  const k = parseKindle(fd.get('pos'));
+  const q = k ? k.cur : intOf(fd.get('pos'));
+  if (k && k.total > 0 && k.total !== b.totalPages) b.totalPages = k.total;
+  const chap = intOf(fd.get('chap'));
+  b.chapterEnd = chap > 0 ? chap : 0;
+  closeDialog();
+  if (q > 0) jumpTo(q);
+  if (f.dataset.stop) stopReading(); else { save(); renderRead(); }
+}
 function openJump() {
   const b = activeBook();
   if (!b || !sessionMine(b)) return;
+  if (isLoc(b)) { openLocDialog(false); return; }
   openDialog('<div class="dlg-body"><h2 id="dlgTitle">Ir para a página…</h2>' +
     '<form data-form="jump"><div class="field"><label for="f-jump">Cheguei na página</label>' +
     '<input id="f-jump" name="page" type="number" inputmode="numeric" min="1" max="' + b.totalPages + '" value="' + Math.min(b.totalPages, b.currentPage + 1) + '" required></div>' +
@@ -2963,6 +3091,16 @@ const handlers = {
   lap,
   undo: undoLap,
   jump: openJump,
+  stopLoc: () => { const b = activeBook(); if (b && isLoc(b) && sessionMine(b)) openLocDialog(true); else stopReading(); },
+  bookUnit: (el) => setBookUnit(el.dataset.v),
+  kindlePaste: async () => {
+    let t = '';
+    try { t = navigator.clipboard && navigator.clipboard.readText ? await navigator.clipboard.readText() : ''; } catch (e) { t = ''; }
+    const k = parseKindle(t);
+    if (!k) { toast('Copie do Kindle algo como “pos. 241 de 10.483”, ou digite os números.'); return; }
+    const tot = $('#f-total'); const cur = $('#f-cur');
+    if (tot) tot.value = k.total; if (cur) cur.value = k.cur;
+  },
   closeDlg: closeDialog,
   goalInc: () => adjustGoal(5),
   goalDec: () => adjustGoal(-5),
@@ -3001,12 +3139,14 @@ const handlers = {
   avatar: () => avatarMenu(),
   avatarPick: () => pickAvatar(),
   avatarDel: () => { delete S.settings.avatar; save(); renderAvatar(); closeDialog(); toast('Foto removida.'); },
-  coverSearch: () => openCoverSearch(),
+  coverSearch: () => openCoverPicker(),
+  pickClose: () => closePicker(),
+  pickBack: () => { const v = $('#pickView'); if (v) { v.hidden = true; v.innerHTML = ''; } pvChoice = null; },
+  pickConfirm: () => confirmPick(),
   coverQ: () => { const q = $('#coverQ'); openCoverSearch(q ? q.value : ''); },
-  coverGoogle: () => openGoogleImages(),
   coverPaste: () => pasteCover(),
-  coverDlg: (el) => openCoverDialog(el.dataset.id),
-  coverPick: (el) => pickCover(el.dataset.url, el.dataset.thumb),
+  coverDlg: (el) => openCoverPicker(el.dataset.id),
+  coverPick: (el) => previewCover(el.dataset.url, el.dataset.thumb),
   coverPhoto: () => pickCoverFile(),
   srcTab: (el) => { srcTab = el.dataset.src === 'cat' ? 'cat' : 'amazon'; renderBooks(); },
   amzPick: (el) => { const r = amz.items[+el.dataset.i]; if (r) importAmazon(r, { asin: r.asin }, el); },
@@ -3094,6 +3234,7 @@ document.addEventListener('submit', (e) => {
     a.positionSec = clamp(Math.round(pos), 0, a.durationSec); a.finished = a.positionSec >= a.durationSec;
     save(); closeDialog(); renderAudio(); toast('Posição atualizada: ' + Math.floor(a.positionSec / a.durationSec * 100) + '%.');
   }
+  else if (kind === 'loc') submitLoc(f);
   else if (kind === 'jump') { const q = parseInt(new FormData(f).get('page'), 10); closeDialog(); if (q) jumpTo(q); }
 });
 document.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('.hms input')) hmsTyping(e.target); });
