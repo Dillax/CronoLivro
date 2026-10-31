@@ -25,16 +25,18 @@
     </div>
     <div class="topbar-actions">
       <button id="btnInstall" class="chip hidden" type="button" data-act="install">Instalar app</button>
-      <span id="net" class="net online" role="status">Online</span>
+      <button id="avatarBtn" class="avatar" type="button" data-act="avatar" aria-label="Foto de perfil"><span>R</span></button>
     </div>
   </header>
 
   <main>
     <section id="view-read" class="view" aria-label="Ler"></section>
     <section id="view-books" class="view hidden" aria-label="Livros"></section>
+    <section id="view-audio" class="view hidden" aria-label="Audiobooks"></section>
     <section id="view-habits" class="view hidden" aria-label="Hábitos"></section>
     <section id="view-stats" class="view hidden" aria-label="Histórico"></section>
   </main>
+  <footer class="app-footer"><span>CronoLeitura <b id="appVer">v2.11.0</b></span><span>Desenvolvido por <b id="appDev">Robert Simão dos Santos</b></span></footer>
 
   <nav class="tabbar" aria-label="Navegação principal">
     <button type="button" data-act="tab" data-tab="read" aria-current="page">
@@ -44,6 +46,10 @@
     <button type="button" data-act="tab" data-tab="books">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6l8-1.5V19L3 20.5zM13 4.5L21 6v14.5L13 19z"/></svg>
       <span>Livros</span>
+    </button>
+    <button type="button" data-act="tab" data-tab="audio">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0-9 9v6a3 3 0 0 0 3 3h2v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h2a3 3 0 0 0 3-3v-6a9 9 0 0 0-9-9z"/></svg>
+      <span>Áudio</span>
     </button>
     <button type="button" data-act="tab" data-tab="habits">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 2v2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-2V2h-2v2H9V2zM5 9h14v11H5zm2 2v2h2v-2zm4 0v2h2v-2zm4 0v2h2v-2zm-8 4v2h2v-2zm4 0v2h2v-2z"/></svg>

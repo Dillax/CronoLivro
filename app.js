@@ -54,7 +54,7 @@ function idleTimer() {
   return { status: 'idle', bookId: null, sessionId: null, runStart: null, activeMs: 0, lastLapMs: 0, carryMs: 0, flushedMs: 0, startPage: 1, pomoStartMs: 0, pomoDone: false };
 }
 function defaults() {
-  return { v: 2, activeBookId: null, settings: { paceBasis: 'all', keepAwake: true, pomoMin: 25, name: 'Professor Robert', fx: true, amazonApi: '', goal: { period: 'week', unit: 'min', value: 210 } }, books: [], daily: {}, log: [], timer: idleTimer() };
+  return { v: 2, activeBookId: null, settings: { paceBasis: 'all', keepAwake: true, pomoMin: 25, name: 'Professor Robert', fx: true, amazonApi: '', goal: { period: 'week', unit: 'min', value: 210 } }, books: [], daily: {}, log: [], audio: [], listenLog: [], listen: idleListen(), activeAudioId: null, timer: idleTimer() };
 }
 function newBook(o) {
   const total = Math.max(1, Math.round(+o.totalPages) || 1);
@@ -79,6 +79,7 @@ function newBook(o) {
     carrySec: 0
   };
 }
+function idleListen() { return { status: 'idle', abId: null, runStart: null, accMs: 0, startedAt: null, id: null }; }
 function normalize(p) {
   const d = defaults();
   const s = Object.assign(d, p);
@@ -86,6 +87,11 @@ function normalize(p) {
   s.timer = Object.assign(idleTimer(), p.timer || {});
   s.daily = p.daily || {};
   s.log = Array.isArray(p.log) ? p.log : [];
+  s.audio = Array.isArray(p.audio) ? p.audio : [];
+  s.listenLog = Array.isArray(p.listenLog) ? p.listenLog : [];
+  s.listen = Object.assign(idleListen(), p.listen || {});
+  if (s.listen.status !== 'idle' && !s.audio.some((a) => a.id === s.listen.abId)) s.listen = idleListen();
+  if (!s.audio.some((a) => a.id === s.activeAudioId)) s.activeAudioId = s.audio[0] ? s.audio[0].id : null;
   if (!s.settings.goal || !s.settings.goal.period) s.settings.goal = defaults().settings.goal;
   s.books = (p.books || []).map((b) => Object.assign(newBook(b), b, { segments: b.segments || [], daily: b.daily || {}, timeSec: b.timeSec || 0 }));
   if (!s.books.some((b) => b.id === s.activeBookId)) s.activeBookId = s.books[0] ? s.books[0].id : null;
@@ -135,6 +141,10 @@ function save() {
   }
 }
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
+const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
+const anyById = (id) => bookById(id) || audioById(id);
+const APP_VERSION = '2.11.0';
+const DEVELOPER = 'Robert Simão dos Santos';
 const activeBook = () => bookById(S.activeBookId);
 
 /* ======================= cronômetro ======================= */
@@ -348,7 +358,7 @@ let ctx = { pace: null };
 let curTab = 'read';
 function showTab(name) {
   curTab = name;
-  ['read', 'books', 'habits', 'stats'].forEach((t) => $('#view-' + t).classList.toggle('hidden', t !== name));
+  ['read', 'books', 'audio', 'habits', 'stats'].forEach((t) => $('#view-' + t).classList.toggle('hidden', t !== name));
   $$('.tabbar button').forEach((b) => (b.dataset.tab === name ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current')));
   renderCurrent();
   window.scrollTo(0, 0);
@@ -357,6 +367,7 @@ function renderCurrent() {
   if (curTab === 'read') renderRead();
   else if (curTab === 'books') renderBooks();
   else if (curTab === 'habits') renderHabits();
+  else if (curTab === 'audio') renderAudio();
   else renderStats();
 }
 function setActive(id) {
@@ -1119,7 +1130,7 @@ const idbGet = (k) => idbReq('readonly', (st) => st.get(k));
 const idbDel = (k) => idbReq('readwrite', (st) => st.delete(k));
 const idbClear = () => idbReq('readwrite', (st) => st.clear());
 async function loadCovers() {
-  for (const b of S.books) {
+  for (const b of S.books.concat(S.audio || [])) {
     if (!b.coverLocal || coverUrls[b.id]) continue;
     try { const blob = await idbGet(b.id); if (blob) coverUrls[b.id] = URL.createObjectURL(blob); else b.coverLocal = false; } catch (e) { /* usa o link */ }
   }
@@ -1146,7 +1157,7 @@ function applyPendingCover(b) {
   }
   // capa que veio de uma busca: tenta guardar uma cópia no aparelho em segundo plano
   if (b.cover && !b.coverLocal) {
-    grabImage(b.cover).then((blob) => { if (blob && bookById(b.id)) { setLocalCover(b, blob); save(); } });
+    grabImage(b.cover).then((blob) => { if (blob && anyById(b.id)) { setLocalCover(b, blob); save(); } });
   }
 }
 function blobToDataUrl(blob) {
@@ -1154,7 +1165,7 @@ function blobToDataUrl(blob) {
 }
 async function restoreCovers(map) {
   for (const id of Object.keys(map || {})) {
-    const b = bookById(id);
+    const b = anyById(id);
     if (!b || !/^data:image\//.test(map[id])) continue;
     try { const blob = await (await fetch(map[id])).blob(); setLocalCover(b, blob); } catch (e) { /* ignora */ }
   }
@@ -1806,6 +1817,293 @@ document.addEventListener('click', (e) => { const el = e.target.closest && e.tar
 document.addEventListener('focusin', (e) => { if (e.target.matches && e.target.matches('[data-tip]')) showTip(e.target); });
 window.addEventListener('scroll', hideTip, { passive: true });
 
+/* ======================= audiobooks (estilo Audible / Smart AudioBook) =======================
+ * Cada audiobook guarda duração total e posição (tempo ouvido). O progresso pode ser informado
+ * como tempo ouvido, tempo restante ou porcentagem. O cronômetro de escuta soma o tempo real
+ * multiplicado pela velocidade (ex.: 20 min a 1,5× = 30 min do livro).
+ */
+const SPEEDS = [0.8, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const hms = (sec) => { sec = Math.max(0, Math.round(sec)); const h = Math.floor(sec / 3600); const m = Math.floor((sec % 3600) / 60); return h ? h + ' h ' + pad(m) + ' min' : m + ' min'; };
+const listenNowMs = () => S.listen.accMs + (S.listen.status === 'running' ? Date.now() - S.listen.runStart : 0);
+function newAudio(o) {
+  return {
+    id: uid('a'), title: (o.title || 'Sem título').trim(), author: (o.author || '').trim(), narrator: (o.narrator || '').trim(),
+    publisher: (o.publisher || '').trim(), cover: safeUrl(o.cover), durationSec: Math.max(60, Math.round(+o.durationSec) || 3600),
+    positionSec: Math.max(0, Math.round(+o.positionSec) || 0), speed: +o.speed || 1, dailyGoalMin: clamp(Math.round(+o.dailyGoalMin) || 30, 1, 720),
+    finished: false, addedAt: Date.now()
+  };
+}
+function audioStats(a, extraSec) {
+  const pos = clamp(a.positionSec + (extraSec || 0), 0, a.durationSec);
+  const rem = a.durationSec - pos;
+  const pct = a.durationSec ? pos / a.durationSec : 0;
+  const realRem = rem / (a.speed || 1);
+  const perDay = a.dailyGoalMin * 60;
+  const days = realRem > 0 ? Math.ceil(realRem / perDay) : 0;
+  return { pos, rem, pct, realRem, days, eta: addDays(startOfDay(new Date()), Math.max(0, days - 1)) };
+}
+function liveGain(a) { return S.listen.status !== 'idle' && S.listen.abId === a.id ? (listenNowMs() / 1000) * (a.speed || 1) : 0; }
+
+function renderAudio() {
+  const el = $('#view-audio');
+  const list = S.audio || [];
+  const a = audioById(S.activeAudioId);
+  let cur = '';
+  if (a) {
+    const st = audioStats(a, liveGain(a));
+    const L = S.listen;
+    const mine = L.status !== 'idle' && L.abId === a.id;
+    const spd = '<div class="speed-row" role="group" aria-label="Velocidade">' + SPEEDS.map((v) =>
+      '<button type="button" class="speed' + (v === a.speed ? ' on' : '') + '" data-act="abSpeed" data-v="' + v + '">' + String(v).replace('.', ',') + '×</button>').join('') + '</div>';
+    const ctrl = a.finished
+      ? '<div class="finished-banner">Audiobook concluído! ' + hms(a.durationSec) + ' ouvidos.</div>'
+      : (L.status === 'running' && mine
+        ? '<div class="btn-row"><button class="btn primary" type="button" data-act="abPause">' + ICON.pause + ' Pausar</button><button class="btn" type="button" data-act="abStop">' + ICON.stop + ' Encerrar</button></div>'
+        : '<button class="btn primary xl" type="button" data-act="abPlay">' + ICON.play + (mine ? ' Continuar a ouvir' : ' Começar a ouvir') + '</button>' +
+          (mine ? '<button class="btn block" type="button" data-act="abStop">' + ICON.stop + ' Encerrar sessão</button>' : ''));
+    cur = '<div class="card ab-now">' +
+      '<div class="ab-hero">' + coverHtml(coverSrc(a), 'sq') +
+        '<div class="hero-info"><h2>' + esc(a.title) + '</h2><p class="muted">' + esc(a.author || 'Autor não informado') + '</p>' +
+        (a.narrator ? '<p class="muted ed-line">Narração: ' + esc(a.narrator) + '</p>' : '') +
+        '<div class="pageline"><strong id="abPct">' + Math.floor(st.pct * 100) + '%</strong> ouvido</div></div></div>' +
+      '<div class="progress" role="progressbar" aria-label="Progresso do audiobook" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.floor(st.pct * 100) + '"><div id="abBar" style="width:' + (st.pct * 100).toFixed(2) + '%"></div></div>' +
+      '<div class="progress-meta"><span id="abPos">' + hms(st.pos) + '</span><span id="abDur">' + hms(a.durationSec) + '</span></div>' +
+      '<div class="metrics ab-metrics">' +
+        '<div class="metric hl"><span class="m-label">Faltam</span><strong id="abRem">' + hms(st.rem) + '</strong><span class="m-sub" id="abRemReal">' + (a.speed !== 1 ? 'a ' + String(a.speed).replace('.', ',') + '× ≈ ' + hms(st.realRem) + ' de escuta' : 'na velocidade normal') + '</span></div>' +
+        '<div class="metric"><span class="m-label">Previsão de término</span><strong>' + (a.finished ? '—' : st.days <= 1 ? 'Hoje' : fmtDate(st.eta)) + '</strong><span class="m-sub">' + a.dailyGoalMin + ' min/dia de escuta</span></div>' +
+        '<div class="metric"><span class="m-label">Sessão atual</span><strong id="abClock">' + fmtClock(mine ? listenNowMs() : 0) + '</strong><span class="m-sub" id="abGain">' + (mine ? '+' + hms(liveGain(a)) + ' do livro' : 'tempo real ouvindo') + '</span></div>' +
+      '</div>' +
+      '<label>Velocidade de reprodução</label>' + spd +
+      '<div class="timer-actions ab-actions">' + ctrl + '</div>' +
+      (a.finished ? '' : '<div class="btn-row ab-quick"><button class="btn sm" type="button" data-act="abAdd" data-v="900">+15 min ouvidos</button><button class="btn sm" type="button" data-act="abAdd" data-v="1800">+30 min ouvidos</button></div>') +
+      '<div class="btn-row ab-quick"><button class="btn sm ghost" type="button" data-act="abPosDlg">Atualizar posição</button><button class="btn sm ghost" type="button" data-act="abEdit" data-id="' + esc(a.id) + '">Editar</button></div>' +
+      abHistoryHtml(a) +
+    '</div>';
+  }
+  const grid = S.settings.audioView !== 'list';
+  const items = list.map((x) => {
+    const st = audioStats(x, liveGain(x));
+    const meta = x.finished ? 'Concluído' : hms(st.rem) + ' restantes';
+    if (grid) {
+      return '<article class="book-tile ab-tile' + (x.id === S.activeAudioId ? ' active' : '') + '">' +
+        '<button type="button" class="tile-cover" data-act="abOpen" data-id="' + esc(x.id) + '" aria-label="Abrir ' + esc(x.title) + '">' + coverHtml(coverSrc(x), 'tile sq') +
+        (x.finished ? '<span class="tile-badge">✓</span>' : '') + '</button>' +
+        '<div class="tile-title">' + esc(x.title) + '</div><div class="tile-meta"><span class="pg">' + Math.floor(st.pct * 100) + '%</span> · ' + esc(meta) + '</div>' +
+        '<div class="progress sm"><div style="width:' + (st.pct * 100).toFixed(1) + '%"></div></div>' +
+        '<button type="button" class="tile-edit" data-act="abEdit" data-id="' + esc(x.id) + '">Editar</button></article>';
+    }
+    return '<article class="book-item' + (x.id === S.activeAudioId ? ' active' : '') + '">' + coverHtml(coverSrc(x), 'sm sq') +
+      '<div class="bi-info"><h3>' + esc(x.title) + '</h3><p>' + esc(x.author || 'Autor não informado') + (x.narrator ? ' · narr. ' + esc(x.narrator) : '') + '</p>' +
+      '<p><span class="pg">' + Math.floor(st.pct * 100) + '%</span> · ' + esc(meta) + ' · ' + hms(x.durationSec) + '</p>' +
+      '<div class="progress sm"><div style="width:' + (st.pct * 100).toFixed(1) + '%"></div></div></div>' +
+      '<div class="bi-actions"><button class="btn sm primary" type="button" data-act="abOpen" data-id="' + esc(x.id) + '">Ouvir</button>' +
+      '<button class="btn sm" type="button" data-act="abEdit" data-id="' + esc(x.id) + '">Editar</button></div></article>';
+  }).join('');
+  const viewSeg = '<div class="seg seg-sm lib-seg" role="tablist" aria-label="Visualização">' +
+    '<button type="button" data-act="abView" data-v="list" aria-selected="' + !grid + '">☰ Lista</button>' +
+    '<button type="button" data-act="abView" data-v="grid" aria-selected="' + grid + '">▦ Grade</button></div>';
+  el.innerHTML = (a ? cur : '<div class="card empty"><h2>Audiobooks</h2><p>Cadastre seus audiobooks (Audible, Smart AudioBook, Ubook…) para acompanhar tempo ouvido, quanto falta e quando vai terminar.</p>' +
+      '<button class="btn primary" type="button" data-act="abNew">+ Adicionar audiobook</button></div>') +
+    (list.length ? '<div class="lib-head"><div class="section-title">Meus audiobooks (' + list.length + ')</div>' + viewSeg + '</div>' +
+      '<div class="' + (grid ? 'lib-grid' : 'stack') + '">' + items + '</div>' +
+      '<button class="btn block" type="button" data-act="abNew">+ Adicionar audiobook</button>' : '');
+}
+function abHistoryHtml(a) {
+  const ls = (S.listenLog || []).filter((l) => l.abId === a.id).slice(-5).reverse();
+  if (!ls.length) return '';
+  return '<details class="ab-hist"><summary>Últimas sessões de escuta</summary>' + ls.map((l) =>
+    '<div class="session"><div class="s-main"><div class="s-title">' + esc(fmtDate(new Date(l.start))) + ' · ' + hhmm(l.start) + '–' + hhmm(l.end) + '</div>' +
+    '<div class="s-sub">' + hms(l.sec) + ' ouvindo · +' + hms(l.gain) + ' do livro a ' + String(l.speed).replace('.', ',') + '×</div></div></div>').join('') + '</details>';
+}
+function updateAudioLive() {
+  const a = audioById(S.listen.abId);
+  if (!a || S.activeAudioId !== a.id || !$('#abClock')) return;
+  const g = liveGain(a);
+  const st = audioStats(a, g);
+  setText('#abClock', fmtClock(listenNowMs()));
+  setText('#abGain', '+' + hms(g) + ' do livro');
+  setText('#abPct', Math.floor(st.pct * 100) + '%');
+  setText('#abPos', hms(st.pos));
+  setText('#abRem', hms(st.rem));
+  const bar = $('#abBar'); if (bar) bar.style.width = (st.pct * 100).toFixed(2) + '%';
+  if (st.rem <= 0) abStop(true);
+}
+function abPlay() {
+  const a = audioById(S.activeAudioId);
+  if (!a || a.finished) return;
+  const L = S.listen;
+  if (L.status !== 'idle' && L.abId !== a.id) { toast('Encerre a escuta do outro audiobook antes.'); return; }
+  unlockAudio();
+  if (L.status === 'idle') S.listen = Object.assign(idleListen(), { status: 'running', abId: a.id, runStart: Date.now(), startedAt: Date.now(), id: uid('l') });
+  else { L.status = 'running'; L.runStart = Date.now(); }
+  save(); renderAudio(); bell('start');
+}
+function abPause() {
+  const L = S.listen;
+  if (L.status !== 'running') return;
+  L.accMs += Date.now() - L.runStart; L.runStart = null; L.status = 'paused';
+  save(); renderAudio(); bell('pause');
+}
+function abStop(auto) {
+  const L = S.listen;
+  if (L.status === 'idle') return;
+  const a = audioById(L.abId);
+  if (L.status === 'running') { L.accMs += Date.now() - L.runStart; }
+  const sec = L.accMs / 1000;
+  if (a && sec >= 5) {
+    const gain = Math.min(a.durationSec - a.positionSec, sec * (a.speed || 1));
+    a.positionSec = Math.min(a.durationSec, Math.round(a.positionSec + gain));
+    S.listenLog.push({ id: L.id, abId: a.id, start: L.startedAt || Date.now() - sec * 1000, end: Date.now(), sec: Math.round(sec), gain: Math.round(gain), speed: a.speed || 1 });
+    if (S.listenLog.length > 4000) S.listenLog.splice(0, S.listenLog.length - 4000);
+    if (a.positionSec >= a.durationSec) { a.finished = true; a.finishedAt = Date.now(); }
+  }
+  S.listen = idleListen();
+  save(); renderAudio(); bell('stop');
+  if (a) toast(a.finished ? 'Audiobook concluído! 🎧' : 'Sessão de escuta salva: +' + hms(Math.min(a.durationSec, sec * (a.speed || 1))) + ' do livro.');
+}
+/* converte "11:30", "11h30", "11 h 30 min", "690" (minutos) em segundos */
+function parseDur(txt) {
+  const t = String(txt || '').trim().toLowerCase();
+  if (!t) return NaN;
+  let m = t.match(/^(\d+)\s*:\s*(\d{1,2})(?:\s*:\s*(\d{1,2}))?$/);
+  if (m) return (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0));
+  m = t.match(/^(?:(\d+)\s*h)?\s*(?:(\d+)\s*(?:min|m))?\s*(?:(\d+)\s*s)?$/);
+  if (m && (m[1] || m[2] || m[3])) return (+(m[1] || 0)) * 3600 + (+(m[2] || 0)) * 60 + (+(m[3] || 0));
+  if (/^\d+$/.test(t)) return (+t) * 60;
+  return NaN;
+}
+const durTxt = (sec) => { sec = Math.round(sec || 0); return Math.floor(sec / 3600) + ':' + pad(Math.floor((sec % 3600) / 60)); };
+function progressFields(a, mode) {
+  mode = mode || 'heard';
+  const val = !a ? '' : mode === 'pct' ? (a.durationSec ? Math.floor((a.positionSec / a.durationSec) * 1000) / 10 : 0) : mode === 'left' ? durTxt(a.durationSec - a.positionSec) : durTxt(a.positionSec);
+  return '<label>Progresso</label><div class="seg seg-sm" role="tablist">' + [['heard', 'Tempo ouvido'], ['left', 'Tempo restante'], ['pct', 'Porcentagem']].map(([k, l]) =>
+    '<button type="button" data-act="abMode" data-v="' + k + '" aria-selected="' + (k === mode) + '">' + l + '</button>').join('') + '</div>' +
+    '<input type="hidden" name="pmode" value="' + mode + '">' +
+    '<div class="field"><input id="f-prog" name="prog" ' + (mode === 'pct' ? 'type="number" inputmode="decimal" min="0" max="100" step="0.1" placeholder="ex.: 44"' : 'inputmode="numeric" placeholder="h:mm (ex.: 5:02)"') + ' value="' + esc(val) + '">' +
+    '<p class="hint">' + (mode === 'pct' ? 'Porcentagem mostrada no app de áudio.' : mode === 'left' ? 'Ex.: o Audible mostra "6 h 28 min restantes" → 6:28.' : 'Tempo já ouvido (posição no livro), ex.: 5:02.') + '</p></div>';
+}
+function openAudioDialog(editId) {
+  const a = editId ? audioById(editId) : null;
+  pendingCover = null;
+  const v = a || { dailyGoalMin: 30, speed: 1 };
+  openDialog('<div class="dlg-body"><h2 id="dlgTitle">' + (a ? 'Editar audiobook' : 'Adicionar audiobook') + '</h2>' +
+    '<form data-form="audio" data-id="' + (a ? esc(a.id) : '') + '" novalidate>' +
+      '<input type="hidden" name="isbn" value=""><input type="hidden" name="cover" value="' + esc(v.cover || '') + '">' +
+      '<div class="field"><label for="f-title">Título</label><input id="f-title" name="title" required value="' + esc(v.title || '') + '"></div>' +
+      '<div class="field-row"><div class="field"><label for="f-author">Autor</label><input id="f-author" name="author" value="' + esc(v.author || '') + '"></div>' +
+        '<div class="field"><label for="f-narr">Narrador</label><input id="f-narr" name="narrator" value="' + esc(v.narrator || '') + '"></div></div>' +
+      '<div class="field"><label for="f-pub">Editora / plataforma</label><input id="f-pub" name="publisher" placeholder="ex.: Audible Studios" value="' + esc(v.publisher || '') + '"></div>' +
+      '<div class="dlg-cover"><div id="dlgCoverImg">' + coverHtml(a ? coverSrc(a) : v.cover, 'sq') + '</div>' +
+        '<div class="dlg-cover-side"><span class="muted" id="dlgCoverNote">' + coverNote(a, v) + '</span>' +
+        '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Buscar capa</button>' +
+        '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button></div></div></div>' +
+      '<div id="coverGrid" class="cover-grid" hidden></div>' +
+      '<div class="field-row"><div class="field"><label for="f-dur">Duração total (h:mm)</label><input id="f-dur" name="duration" inputmode="numeric" required placeholder="ex.: 11:30" value="' + (a ? durTxt(a.durationSec) : '') + '"></div>' +
+        '<div class="field"><label for="f-goal">Escuta por dia (min)</label><input id="f-goal" name="dailyGoalMin" type="number" inputmode="numeric" min="1" max="720" value="' + v.dailyGoalMin + '"></div></div>' +
+      '<div id="progBox">' + progressFields(a, 'heard') + '</div>' +
+      (a ? '<div class="check field"><input type="checkbox" id="f-fin" name="finished"' + (a.finished ? ' checked' : '') + '><label for="f-fin">Audiobook concluído</label></div>' : '') +
+      '<div class="dlg-actions">' + (a ? '<button type="button" class="btn danger" data-act="abDel" data-id="' + esc(a.id) + '">Excluir</button>' : '') +
+        '<button type="button" class="btn" data-act="closeDlg">Cancelar</button><button type="submit" class="btn primary">Salvar</button></div>' +
+    '</form></div>');
+}
+function openAudioPosDlg() {
+  const a = audioById(S.activeAudioId);
+  if (!a) return;
+  openDialog('<div class="dlg-body"><h2 id="dlgTitle">Atualizar posição</h2><p class="muted">Copie do seu app de áudio (Audible, Smart AudioBook…).</p>' +
+    '<form data-form="audioPos" data-id="' + esc(a.id) + '"><div id="progBox">' + progressFields(a, 'heard') + '</div>' +
+    '<div class="dlg-actions"><button type="button" class="btn" data-act="closeDlg">Cancelar</button><button type="submit" class="btn primary">Salvar</button></div></form></div>');
+}
+function readProgress(fd, durationSec) {
+  const mode = String(fd.get('pmode') || 'heard');
+  const raw = String(fd.get('prog') || '').trim();
+  if (!raw) return null;
+  if (mode === 'pct') { const p = parseFloat(raw.replace(',', '.')); return isFinite(p) ? clamp(p, 0, 100) / 100 * durationSec : NaN; }
+  const t = parseDur(raw);
+  if (!isFinite(t)) return NaN;
+  return mode === 'left' ? durationSec - t : t;
+}
+function submitAudio(f) {
+  const fd = new FormData(f);
+  const title = String(fd.get('title') || '').trim();
+  const dur = parseDur(fd.get('duration'));
+  if (!title) { toast('Informe o título.'); return; }
+  if (!(dur >= 60)) { toast('Informe a duração total, ex.: 11:30.'); return; }
+  const pos = readProgress(fd, dur);
+  if (Number.isNaN(pos)) { toast('Progresso inválido. Use h:mm (ex.: 5:02) ou %.'); return; }
+  const id = f.dataset.id;
+  const fields = { title, author: String(fd.get('author') || '').trim(), narrator: String(fd.get('narrator') || '').trim(), publisher: String(fd.get('publisher') || '').trim(),
+    durationSec: Math.round(dur), dailyGoalMin: clamp(parseInt(fd.get('dailyGoalMin'), 10) || 30, 1, 720) };
+  let a;
+  if (id) {
+    a = audioById(id); if (!a) return;
+    Object.assign(a, fields);
+    if (pos != null) a.positionSec = clamp(Math.round(pos), 0, a.durationSec);
+    a.positionSec = Math.min(a.positionSec, a.durationSec);
+    a.finished = fd.get('finished') === 'on' || a.positionSec >= a.durationSec;
+    if (a.finished) a.positionSec = a.durationSec;
+  } else {
+    a = newAudio(Object.assign({}, fields, { cover: fd.get('cover'), positionSec: pos || 0 }));
+    S.audio.push(a);
+    S.activeAudioId = a.id;
+  }
+  if (!pendingCover && fd.get('cover') && fd.get('cover') !== a.cover) a.cover = safeUrl(String(fd.get('cover')));
+  applyPendingCover(a);
+  save(); closeDialog(); renderAudio(); toast(id ? 'Audiobook atualizado.' : 'Audiobook adicionado. Bom proveito! 🎧');
+}
+function deleteAudio(id) {
+  const a = audioById(id);
+  if (!a || !confirm('Excluir "' + a.title + '"?')) return;
+  if (S.listen.abId === id) S.listen = idleListen();
+  S.audio = S.audio.filter((x) => x.id !== id);
+  S.listenLog = S.listenLog.filter((l) => l.abId !== id);
+  dropLocalCover(id);
+  if (S.activeAudioId === id) S.activeAudioId = S.audio[0] ? S.audio[0].id : null;
+  save(); closeDialog(); renderAudio(); toast('Audiobook excluído.');
+}
+
+/* ======================= foto de perfil ======================= */
+function renderAvatar() {
+  const b = $('#avatarBtn');
+  if (!b) return;
+  const img = S.settings.avatar;
+  const name = String(S.settings.name || 'R').replace(/^(prof(essor|\.)?\s+)/i, '');
+  b.innerHTML = img ? '<img src="' + esc(img) + '" alt="">' : '<span>' + esc((name.trim()[0] || 'R').toUpperCase()) + '</span>';
+  b.setAttribute('aria-label', img ? 'Foto de perfil (tocar para trocar)' : 'Adicionar foto de perfil');
+}
+function squareJpeg(file, size) {
+  return new Promise((res) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const s2 = Math.min(img.naturalWidth, img.naturalHeight);
+      const c = document.createElement('canvas'); c.width = size; c.height = size;
+      c.getContext('2d').drawImage(img, (img.naturalWidth - s2) / 2, (img.naturalHeight - s2) / 2, s2, s2, 0, 0, size, size);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/jpeg', 0.85));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); res(null); };
+    img.src = url;
+  });
+}
+function pickAvatar() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0];
+    if (!f) return;
+    const d = await squareJpeg(f, 192);
+    if (!d) { toast('Não consegui abrir essa imagem.'); return; }
+    S.settings.avatar = d; save(); renderAvatar(); closeDialog(); toast('Foto de perfil atualizada.');
+  };
+  inp.click();
+}
+function avatarMenu() {
+  if (!S.settings.avatar) { pickAvatar(); return; }
+  openDialog('<div class="dlg-body"><h2 id="dlgTitle">Foto de perfil</h2><div class="avatar-big"><img src="' + esc(S.settings.avatar) + '" alt=""></div>' +
+    '<div class="dlg-actions"><button type="button" class="btn danger" data-act="avatarDel">Remover</button><button type="button" class="btn" data-act="closeDlg">Fechar</button>' +
+    '<button type="button" class="btn primary" data-act="avatarPick">Trocar foto</button></div></div>');
+}
+
 /* ======================= tela: Histórico ======================= */
 function last7() {
   const out = [];
@@ -1898,7 +2196,8 @@ async function exportJson() {
   const copy = JSON.parse(JSON.stringify(S));
   copy.timer = idleTimer();
   copy.covers = {};
-  for (const b of S.books) {
+  copy.listen = idleListen();
+  for (const b of S.books.concat(S.audio || [])) {
     if (!b.coverLocal) continue;
     try { const blob = await idbGet(b.id); if (blob) copy.covers[b.id] = await blobToDataUrl(blob); } catch (e) { /* segue sem essa capa */ }
   }
@@ -1979,6 +2278,21 @@ const handlers = {
   goalUnit: (el) => { const g = S.settings.goal; g.unit = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
   goalStep: (el) => { const g = S.settings.goal; const step = g.unit === 'books' ? 1 : g.period === 'year' ? 100 : g.period === 'month' ? 30 : g.period === 'week' ? 15 : 5; g.value = Math.max(1, g.value + step * (+el.dataset.v)); save(); renderHabits(); keepGoalOpen(); },
   libView: (el) => { S.settings.libView = el.dataset.v === 'grid' ? 'grid' : 'list'; save(); renderBooks(); const h = $('.lib-head'); if (h) h.scrollIntoView({ block: 'start' }); },
+  abNew: () => openAudioDialog(null),
+  abEdit: (el) => openAudioDialog(el.dataset.id),
+  abDel: (el) => deleteAudio(el.dataset.id),
+  abOpen: (el) => { if (S.listen.status !== 'idle' && S.listen.abId !== el.dataset.id) { toast('Encerre a escuta atual antes de trocar.'); return; } S.activeAudioId = el.dataset.id; save(); renderAudio(); window.scrollTo(0, 0); },
+  abView: (el) => { S.settings.audioView = el.dataset.v === 'list' ? 'list' : 'grid'; save(); renderAudio(); },
+  abSpeed: (el) => { const a = audioById(S.activeAudioId); if (!a) return; if (S.listen.status !== 'idle' && S.listen.abId === a.id) { toast('Pause e encerre a sessão para trocar a velocidade.'); return; } a.speed = +el.dataset.v; save(); renderAudio(); },
+  abPlay: () => abPlay(),
+  abPause: () => abPause(),
+  abStop: () => abStop(false),
+  abAdd: (el) => { const a = audioById(S.activeAudioId); if (!a) return; a.positionSec = Math.min(a.durationSec, a.positionSec + (+el.dataset.v)); if (a.positionSec >= a.durationSec) { a.finished = true; a.finishedAt = Date.now(); } save(); renderAudio(); toast('Posição atualizada: ' + hms(a.positionSec) + '.'); },
+  abPosDlg: () => openAudioPosDlg(),
+  abMode: (el) => { const box = $('#progBox'); const f = el.closest('form'); if (!box || !f) return; const a = audioById(f.dataset.id); box.innerHTML = progressFields(a, el.dataset.v); },
+  avatar: () => avatarMenu(),
+  avatarPick: () => pickAvatar(),
+  avatarDel: () => { delete S.settings.avatar; save(); renderAvatar(); closeDialog(); toast('Foto removida.'); },
   coverSearch: () => openCoverSearch(),
   coverPick: (el) => pickCover(el.dataset.url),
   coverPhoto: () => pickCoverFile(),
@@ -2060,6 +2374,14 @@ document.addEventListener('submit', (e) => {
   const kind = f.dataset.form;
   if (kind === 'search') runSearch(new FormData(f).get('q') || '');
   else if (kind === 'book') submitBook(f);
+  else if (kind === 'audio') submitAudio(f);
+  else if (kind === 'audioPos') {
+    const a = audioById(f.dataset.id); if (!a) return;
+    const pos = readProgress(new FormData(f), a.durationSec);
+    if (pos == null || Number.isNaN(pos)) { toast('Use h:mm (ex.: 5:02) ou %.'); return; }
+    a.positionSec = clamp(Math.round(pos), 0, a.durationSec); a.finished = a.positionSec >= a.durationSec;
+    save(); closeDialog(); renderAudio(); toast('Posição atualizada: ' + Math.floor(a.positionSec / a.durationSec * 100) + '%.');
+  }
   else if (kind === 'jump') { const q = parseInt(new FormData(f).get('page'), 10); closeDialog(); if (q) jumpTo(q); }
 });
 document.addEventListener('change', (e) => {
@@ -2116,9 +2438,8 @@ window.addEventListener('pagehide', () => { if (S.timer.status !== 'idle') { flu
 /* ======================= PWA e inicialização ======================= */
 let deferredInstall = null;
 function setNet() {
-  const n = $('#net');
-  n.textContent = navigator.onLine ? 'Online' : 'Offline';
-  n.className = 'net ' + (navigator.onLine ? 'online' : 'offline');
+  const a = $('#avatarBtn');
+  if (a) { a.classList.toggle('offline', !navigator.onLine); a.title = navigator.onLine ? 'Perfil' : 'Perfil (sem internet)'; }
 }
 function setupPwa() {
   window.addEventListener('online', setNet);
@@ -2150,6 +2471,8 @@ function setupPwa() {
 }
 function applyFx() { document.body.classList.toggle('calm', S.settings.fx === false); }
 applyFx();
+renderAvatar();
+(function footer() { const v = $('#appVer'); if (v) v.textContent = 'v' + APP_VERSION; const d = $('#appDev'); if (d) d.textContent = DEVELOPER; })();
 setupPwa();
 showTab('read');
 loadCovers().then(() => { if (Object.keys(coverUrls).length) renderCurrent(); });
@@ -2161,4 +2484,5 @@ loadCovers().then(() => { if (Object.keys(coverUrls).length) renderCurrent(); })
   useSharedText(shared);
 })();
 setInterval(tick, 250);
+setInterval(() => { if (S.listen.status === 'running' && curTab === 'audio' && !document.hidden) updateAudioLive(); }, 1000);
 if (S.timer.status === 'running') acquireWake();
