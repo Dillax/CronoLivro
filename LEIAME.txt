@@ -1,4 +1,4 @@
-CronoLeitura v2.13 (PWA)
+CronoLeitura v2.14 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -41,6 +41,11 @@ Sem chave, o Google divide um limite único entre todos os sites sem chave, e el
 6. No app: Histórico > Google Livros > cole a chave. Sem cartão de crédito; ~1000 buscas/dia.
 
 AUDIOBOOKS (aba "Áudio")
+- AUDIBLE: com o link da página (ou o link curto adbl.co do botão Compartilhar), o app lê o
+  catálogo oficial do Audible pelo código do livro (ASIN): título, autor, narrador, editora,
+  duração e capa 500 px. Se o catálogo não responder, lê a própria página.
+- Mensagem de Compartilhar ("Estou ouvindo "Livro" de Autor no Audible: link") também é entendida:
+  título e autor vão cada um para o seu campo.
 - IMPORTAR PELO LINK: em "Adicionar audiobook", cole o link da página (Audible, Storytel, Ubook,
   Google Play, Apple Books, Skeelo, Tocalivros…) e toque em "Buscar dados" (colar o link já busca).
   O app preenche título, autor, narrador, duração (h/min/s), editora · plataforma e baixa a capa.
@@ -71,6 +76,11 @@ BIBLIOTECA
   Na grade, toque na capa para ler; "Editar" abaixo de cada livro.
 
 CAPAS (sem servidor)
+- "Buscar capa" abre um campo de busca: digite título, autor ou ISBN. Em audiobooks aparecem
+  também capas quadradas do Audible e do Apple Books.
+- "Google Imagens": abre a busca em outra aba. Toque e segure na capa > "Copiar imagem" (ou
+  "Copiar endereço da imagem"), volte ao app e toque em "Colar capa".
+- Se o site da imagem não deixar copiar, o app baixa pelo wsrv.nl (proxy gratuito de imagens).
 - No cadastro do livro: "Buscar capa" mostra capas de Amazon (pelo ISBN), Google Livros e Open
   Library. Toque na certa: ela é reduzida e SALVA NO CELULAR (aparece offline e vai no backup).
 - "Foto / galeria": tire foto da capa ou escolha uma imagem (ex.: print da capa no Google).

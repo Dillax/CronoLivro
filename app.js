@@ -146,7 +146,7 @@ function save() {
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
 const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
 const anyById = (id) => bookById(id) || audioById(id);
-const APP_VERSION = '2.13.0';
+const APP_VERSION = '2.14.0';
 const DEVELOPER = 'Robert Simão dos Santos';
 const activeBook = () => bookById(S.activeBookId);
 
@@ -1192,7 +1192,13 @@ function imageToJpeg(img) {
   c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
   return new Promise((res) => { try { c.toBlob((b) => res(b), 'image/jpeg', 0.85); } catch (e) { res(null); } });
 }
-function grabImage(url) {
+const wsrv = (u) => 'https://wsrv.nl/?url=' + encodeURIComponent(String(u).replace(/^https?:\/\//, '')) + '&w=600&output=jpg&q=88';
+async function grabImage(url) {
+  const u = safeUrl(url);
+  if (!u) return null;
+  return (await grabImageOnce(u)) || (/^https:\/\/wsrv\.nl\//.test(u) ? null : await grabImageOnce(wsrv(u)));
+}
+function grabImageOnce(url) {
   return new Promise((res) => {
     const u = safeUrl(url);
     if (!u) { res(null); return; }
@@ -1227,13 +1233,21 @@ function isbn13to10(i13) {
 }
 const amazonCoverByIsbn = (i) => { const i10 = isbn13to10(i); return i10 ? 'https://images-na.ssl-images-amazon.com/images/P/' + i10 + '.01.LZZZZZZZ.jpg' : ''; };
 /* junta capas de várias fontes para o título/autor (e ISBN, se houver) */
-async function coverCandidates(title, author, isbn) {
+async function coverCandidates(title, author, isbn, audio) {
   const out = [];
   const add = (u, src) => { u = safeUrl(u); if (u && !out.some((x) => x.url === u)) out.push({ url: u, src }); };
+  if (!isbn) { const qi = isbnOf(String(title || '')); if (qi) { isbn = qi; title = ''; } }
+  if (audio && title) {
+    const q = [title, author ? author.split(',')[0] : ''].filter(Boolean).join(' ');
+    const [ab, it] = await Promise.all([audibleSearch(q).catch(() => []), itunesAudio(q).catch(() => [])]);
+    ab.forEach((x) => add(x.cover, 'Audible'));
+    it.forEach((x) => add(x.cover, 'Apple Books'));
+  }
   if (isbn) {
     add(amazonCoverByIsbn(isbn), 'Amazon');
     add('https://covers.openlibrary.org/b/isbn/' + cleanIsbn(isbn) + '-L.jpg?default=false', 'Open Library');
   }
+  if (!title && !author && isbn) return out;
   const qParts = [title ? 'intitle:' + title : '', author ? 'inauthor:' + author.split(',')[0] : ''].filter(Boolean).join(' ');
   const gBase = 'https://www.googleapis.com/books/v1/volumes?printType=books&maxResults=30&fields=items(volumeInfo(imageLinks(thumbnail,smallThumbnail),industryIdentifiers,language))&q=' + encodeURIComponent(qParts || title);
   const jobs = [
@@ -1256,26 +1270,80 @@ async function coverCandidates(title, author, isbn) {
     if (e && e.cover_i) add('https://covers.openlibrary.org/b/id/' + e.cover_i + '-L.jpg', 'Open Library');
     if (d.cover_i) add('https://covers.openlibrary.org/b/id/' + d.cover_i + '-L.jpg', 'Open Library');
   });
-  return out.slice(0, 36);
+  return out.slice(0, 48);
 }
-async function openCoverSearch() {
+let coverSeq = 0;
+async function openCoverSearch(qOverride) {
   const grid = $('#coverGrid');
   if (!grid) return;
-  const title = (($('#f-title') || {}).value || '').trim();
-  const author = (($('#f-author') || {}).value || '').trim();
-  const isbn = (($('input[name="isbn"]') || {}).value || '').trim();
-  if (!title && !isbn) { toast('Digite o título primeiro.'); return; }
-  if (!navigator.onLine) { toast('Sem internet: use "Foto / galeria".'); return; }
+  const audio = !!$('form[data-form="audio"]');
+  const typedQ = qOverride != null ? String(qOverride).trim() : '';
+  const title = typedQ || (($('#f-title') || {}).value || '').trim();
+  const author = typedQ ? '' : (($('#f-author') || {}).value || '').trim();
+  const isbn = typedQ ? '' : (($('input[name="isbn"]') || {}).value || '').trim();
+  const qVal = typedQ || [title, author.split(',')[0]].filter(Boolean).join(' ') || isbn;
+  const box = '<div class="cover-q"><input id="coverQ" type="search" enterkeyhint="search" placeholder="Título, autor ou ISBN" value="' + esc(qVal) + '">' +
+    '<button type="button" class="btn sm primary" data-act="coverQ">' + ICON.search + ' Buscar</button></div>';
   grid.hidden = false;
-  grid.innerHTML = '<div class="status-line"><div class="spinner"></div>Procurando capas…</div>';
-  const list = await coverCandidates(title, author, isbn);
-  if (!$('#coverGrid')) return;
-  grid.innerHTML = list.length
-    ? '<p class="hint">Toque na capa certa para salvar no celular.</p><div class="cover-opts">' +
+  if (!title && !isbn) { grid.innerHTML = box + '<p class="hint">Digite o título (ou o ISBN) e toque em Buscar.</p>'; const q = $('#coverQ'); if (q) q.focus(); return; }
+  if (!navigator.onLine) { toast('Sem internet: use "Foto / galeria".'); return; }
+  const seq = ++coverSeq;
+  grid.innerHTML = box + '<div class="status-line"><div class="spinner"></div>Procurando capas' + (audio ? ' (Audible, Apple Books, Google, Amazon…)' : '') + '…</div>';
+  const list = await coverCandidates(title, author, isbn, audio);
+  if (!$('#coverGrid') || seq !== coverSeq) return;
+  grid.innerHTML = box + (list.length
+    ? '<p class="hint">Toque na capa certa para salvar no celular.</p><div class="cover-opts' + (audio ? ' sq' : '') + '">' +
       list.map((c) => '<button type="button" class="cover-opt" data-act="coverPick" data-url="' + esc(c.url) + '" title="' + esc(c.src) + '">' +
         '<img class="opt-img" src="' + esc(c.url) + '" alt="Capa (' + esc(c.src) + ')" loading="lazy" referrerpolicy="no-referrer"><span>' + esc(c.src) + '</span></button>').join('') + '</div>'
-    : '<div class="status-line">Nenhuma capa encontrada. Use "Foto / galeria" (pode ser um print da capa).</div>';
+    : '<div class="status-line">Nenhuma capa encontrada. Tente outro termo, "Google Imagens" ou "Foto / galeria".</div>');
 }
+/* Google Imagens em outra aba: toque e segure na capa › "Copiar imagem" (ou "Copiar endereço
+ * da imagem"), volte ao app e toque em "Colar capa". É o equivalente web do recurso do
+ * Smart AudioBook Player (que, por ser app nativo, baixa a imagem tocada dentro dele). */
+function openGoogleImages() {
+  const t = (($('#f-title') || {}).value || '').trim();
+  const a = (($('#f-author') || {}).value || '').trim().split(',')[0];
+  const audio = !!$('form[data-form="audio"]');
+  if (!t) { toast('Digite o título primeiro.'); return; }
+  window.open('https://www.google.com/search?tbm=isch&q=' + encodeURIComponent([t, a, audio ? 'audiobook capa' : 'livro capa'].filter(Boolean).join(' ')), '_blank', 'noopener');
+  const n = $('#dlgCoverNote');
+  if (n) n.textContent = 'No Google: toque e segure na capa › "Copiar imagem" ou "Copiar endereço da imagem". Volte aqui e toque em "Colar capa".';
+}
+function imgUrlFromText(text) {
+  const m = String(text || '').match(/https?:\/\/[^\s<>"']+/i);
+  if (!m) return '';
+  let u = m[0];
+  try { const x = new URL(u); const inner = x.searchParams.get('imgurl') || x.searchParams.get('mediaurl') || x.searchParams.get('url'); if (inner && /^https?:/i.test(inner) && /google|bing/.test(x.hostname)) u = inner; } catch (e) { /* segue */ }
+  return u.replace(/^http:/, 'https:');
+}
+async function useCoverBlob(blob) {
+  const jpg = await fileToJpeg(blob);
+  if (!jpg) { toast('Não consegui abrir essa imagem.'); return false; }
+  pendingCover = { blob: jpg, url: '' };
+  showPendingPreview(URL.createObjectURL(jpg), 'Capa colada: fica salva no celular ao tocar em Salvar.');
+  return true;
+}
+async function pasteCover() {
+  let text = '';
+  try {
+    if (navigator.clipboard && navigator.clipboard.read) {
+      const items = await navigator.clipboard.read();
+      for (const it of items) {
+        const ty = it.types.find((x) => /^image\//.test(x));
+        if (ty) { await useCoverBlob(await it.getType(ty)); return; }
+        if (!text && it.types.includes('text/plain')) text = await (await it.getType('text/plain')).text();
+      }
+    }
+  } catch (e) { /* sem permissão para imagens: tenta texto */ }
+  if (!text) { try { text = navigator.clipboard && navigator.clipboard.readText ? await navigator.clipboard.readText() : ''; } catch (e) { text = ''; } }
+  const u = imgUrlFromText(text);
+  if (!u) { toast('Copie a imagem (ou o endereço da imagem) antes de tocar em "Colar capa".'); return; }
+  pickCover(u);
+}
+const coverBtnsHtml = () => '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Buscar capa</button>' +
+  '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button>' +
+  '<button type="button" class="btn sm ghost" data-act="coverGoogle">' + ICON.search + ' Google Imagens</button>' +
+  '<button type="button" class="btn sm ghost" data-act="coverPaste">' + ICON.paste + ' Colar capa</button></div>';
 function showPendingPreview(src, note) {
   const box = $('#dlgCoverImg');
   if (box) box.innerHTML = coverHtml(src);
@@ -1373,8 +1441,7 @@ function openBookDialog(prefill, editId) {
       '<input type="hidden" name="year" value="' + esc(v.year || '') + '">' +
       '<div class="dlg-cover"><div id="dlgCoverImg">' + coverHtml(b ? coverSrc(b) : v.cover) + '</div>' +
         '<div class="dlg-cover-side"><span class="muted" id="dlgCoverNote">' + coverNote(b, v) + '</span>' +
-        '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Buscar capa</button>' +
-        '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button></div></div></div>' +
+        coverBtnsHtml() + '</div></div>' +
       '<div id="coverGrid" class="cover-grid" hidden></div>' +
       '<div class="field-row">' +
         '<div class="field"><label for="f-total">Total de páginas</label><input id="f-total" name="totalPages" type="number" inputmode="numeric" min="1" step="1" required value="' + (v.totalPages || v.pages || '') + '"></div>' +
@@ -2108,8 +2175,7 @@ function openAudioDialog(editId) {
       '<div class="field"><label for="f-pub">Editora / plataforma</label><input id="f-pub" name="publisher" placeholder="ex.: Audible Studios" value="' + esc(v.publisher || '') + '"></div>' +
       '<div class="dlg-cover"><div id="dlgCoverImg">' + coverHtml(a ? coverSrc(a) : v.cover, 'sq') + '</div>' +
         '<div class="dlg-cover-side"><span class="muted" id="dlgCoverNote">' + coverNote(a, v) + '</span>' +
-        '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Buscar capa</button>' +
-        '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button></div></div></div>' +
+        coverBtnsHtml() + '</div></div>' +
       '<div id="coverGrid" class="cover-grid" hidden></div>' +
       '<div class="field"><label for="f-dur">Duração total</label>' + hmsInputs('dur', a ? a.durationSec : null, 'f-dur') +
         '<p class="hint">Ex.: 6 h 06 min 29 s. Também pode colar 6:06:29 na caixa das horas.</p></div>' +
@@ -2195,7 +2261,7 @@ const PAGE_READERS = [
   (u) => ({ name: 'jina', url: 'https://r.jina.ai/' + u, kind: 'html', headers: { 'X-Return-Format': 'html' } }),
   (u) => ({ name: 'jina texto', url: 'https://r.jina.ai/' + u, kind: 'text' })
 ];
-const AUDIO_HOSTS = [[/audible\./, 'Audible'], [/storytel\./, 'Storytel'], [/ubook\./, 'Ubook'], [/play\.google\./, 'Google Play Livros'],
+const AUDIO_HOSTS = [[/audible\.|^adbl\.co$/, 'Audible'], [/storytel\./, 'Storytel'], [/ubook\./, 'Ubook'], [/play\.google\./, 'Google Play Livros'],
   [/books\.apple\.|apple\.com/, 'Apple Books'], [/spotify\./, 'Spotify'], [/skeelo\./, 'Skeelo'], [/tocalivros\./, 'Tocalivros'], [/kobo\./, 'Kobo'],
   [/bookbeat\./, 'BookBeat'], [/everand\.|scribd\./, 'Everand'], [/libro\.fm/, 'Libro.fm'], [/audiobooks\.com/, 'Audiobooks.com'], [/chirpbooks\./, 'Chirp'],
   [/amazon\.|amzn\.|^a\.co$/, 'Amazon']];
@@ -2253,7 +2319,8 @@ const bigCover = (u) => String(u || '').replace(/^http:/, 'https:').replace(/\._
 
 function htmlToText(html) {
   const h = String(html).replace(/<(script|style|noscript|svg|template)\b[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h[1-6]|tr|dt|dd|section|ul|ol|td|th|header|footer|article|button)>/gi, '$&\n');
+    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|li|h[1-6]|tr|dt|dd|section|ul|ol|td|th|header|footer|article|button|main|aside|nav|figure|table|label)>/gi, '$&\n')
+    .replace(/<\/[a-z]+-[a-z0-9-]+>/gi, '$&\n').replace(/<[a-z]+-[a-z0-9-]+\b[^>]*>/gi, '\n$&');
   const d = new DOMParser().parseFromString(h, 'text/html');
   return (d.body ? d.body.textContent : '').split('\n').map((x) => x.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean).join('\n');
 }
@@ -2314,6 +2381,10 @@ function parseAudioHtml(html, url) {
   const meta = (sel) => { const e = doc.querySelector(sel); return e ? String(e.getAttribute('content') || '').trim() : ''; };
   const ogTitle = meta('meta[property="og:title"]') || meta('meta[name="twitter:title"]') || (doc.title || '').trim();
   take('title', ogTitle);
+  const h1 = doc.querySelector('h1');
+  take('title', h1 ? h1.textContent : '');
+  const canon = (doc.querySelector('link[rel="canonical"]') || {}).href || meta('meta[property="og:url"]');
+  r.asin = asinOf(canon) || asinOf(url) || '';
   take('cover', meta('meta[property="og:image"]') || meta('meta[name="twitter:image"]') || meta('meta[property="og:image:secure_url"]'));
   take('author', meta('meta[property="books:author"]') || meta('meta[property="book:author"]') || meta('meta[name="author"]'));
   // 4) texto da página
@@ -2331,16 +2402,26 @@ function parseAudioText(text, url) {
   const imgs = Array.from(raw.matchAll(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/g)).map((m) => m[1]);
   const cover = imgs.find((u) => /media-amazon|images-amazon|storytel|ubook|googleusercontent|mzstatic|scdn\.co|i\.scdn|cover|capa|skeelo|kobo/i.test(u) && !/sprite|logo|icon|badge|avatar|star/i.test(u)) || '';
   const T = raw.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').replace(/[*_#>`]+/g, ' ')
+    .replace(new RegExp('[ \\t]+(' + [L_AUTHOR, L_NARR, L_PUB, L_DUR, 'data de lan[cç]amento|lan[cç]amento|idioma|categoria|release date|language'].join('|') + ')[ \\t]*[:：]', 'gi'), '\n$1:')
     .split('\n').map((x) => x.replace(/[ \t ]+/g, ' ').trim()).filter(Boolean).join('\n');
   const tl = (T.match(/^Title:\s*(.+)$/m) || [])[1];
-  const firstLine = T.split('\n').find((x) => x.length > 2 && !/^(URL Source|Markdown Content|Published Time)/i.test(x)) || '';
+  const LBL = new RegExp('^(?:' + [L_AUTHOR, L_NARR, L_PUB, L_DUR].join('|') + ')\\s*[:：]', 'i');
+  const firstLine = T.split('\n').find((x) => x.length > 2 && !/^(URL Source|Markdown Content|Published Time|https?:)/i.test(x) && !LBL.test(x)) || '';
   return finishAudio({
     title: tl || firstLine, author: labeled(T, L_AUTHOR), narrator: labeled(T, L_NARR), publisher: labeled(T, L_PUB),
     durationSec: durFromText(T) || 0, cover
   }, url);
 }
+function tidyTitle(t) {
+  t = cleanAbTitle(String(t || '').split('\n')[0]);
+  t = t.split(new RegExp('\\s+(?:' + [L_AUTHOR, L_NARR, L_PUB, L_DUR].join('|') + ')\\s*[:：]', 'i'))[0];
+  t = t.replace(/https?:\/\/\S+/g, '').trim();
+  if (t.length > 90) t = t.split(/\s+[|–—]\s+|\s+-\s+|[.!?]\s/)[0];
+  if (t.length > 90) t = t.slice(0, 90).replace(/\s+\S*$/, '') + '…';
+  return t.replace(/^["“'«]+|["”'»]+$/g, '').trim();
+}
 function finishAudio(r, url) {
-  r.title = cleanAbTitle(r.title);
+  r.title = tidyTitle(r.title);
   r.author = cutVal(r.author); r.narrator = cutVal(r.narrator); r.publisher = cutVal(r.publisher);
   r.durationSec = Math.round(r.durationSec || 0);
   r.cover = safeUrl(bigCover(r.cover));
@@ -2386,6 +2467,90 @@ function fillAudioForm(r) {
   if (r.durationSec) { const p = splitHms(r.durationSec); set('[name=dur_h]', String(p[0])); set('[name=dur_m]', pad(p[1])); set('[name=dur_s]', pad(p[2])); }
   if (r.cover) pickCover(r.cover);
 }
+/* ---------- Audible: catálogo oficial (JSON) pelo código ASIN do link ----------
+ * É a forma mais confiável: devolve título, autores, narradores, editora, duração e capa 500 px.
+ * Tenta direto e, se o navegador bloquear (CORS), pelos mesmos leitores públicos. */
+function asinOf(u) {
+  const s = String(u || '');
+  const m = s.match(/(?:\/|asin=)(B0[0-9A-Z]{8}|\d{9}[\dX])(?=[/?#&]|$)/i);
+  return m ? m[1].toUpperCase() : '';
+}
+function audibleTld(u) {
+  const m = hostOf(u).match(/(?:^|\.)audible\.([a-z.]+)$/);
+  return m ? m[1] : 'com.br';
+}
+const AB_GROUPS = 'contributors,media,product_attrs,product_desc,product_extended_attrs';
+const JSON_READERS = [
+  (u) => u,
+  (u) => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(u),
+  (u) => 'https://corsproxy.io/?url=' + encodeURIComponent(u),
+  (u) => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(u)
+];
+function fetchJsonAny(url, ms, ok) {
+  return new Promise((resolve) => {
+    let left = JSON_READERS.length;
+    let done = false;
+    const end = (v) => { if (!done) { done = true; resolve(v); } };
+    JSON_READERS.forEach((mk, i) => {
+      // direto primeiro; leitores públicos entram 600 ms depois (economiza quando o direto funciona)
+      setTimeout(() => {
+        if (done) { left--; return; }
+        readPage({ url: mk(url) }, ms || 12000).then((t) => { const j = JSON.parse(t); if (!ok || ok(j)) end(j); })
+          .catch(() => null).finally(() => { if (--left === 0) end(null); });
+      }, i ? 600 : 0);
+    });
+    setTimeout(() => end(null), (ms || 12000) + 2500);
+  });
+}
+function mapAudible(p, tld) {
+  if (!p || !p.title) return null;
+  const imgs = p.product_images || {};
+  const big = imgs['1024'] || imgs['500'] || Object.keys(imgs).map((k) => imgs[k])[0] || '';
+  return {
+    title: p.title, author: nameList(p.authors).join(', '), narrator: nameList(p.narrators).join(', '),
+    publisher: p.publisher_name || '', durationSec: (+p.runtime_length_min || 0) * 60, cover: big,
+    asin: p.asin || '', link: p.asin ? 'https://www.audible.' + tld + '/pd/' + p.asin : ''
+  };
+}
+async function audibleProduct(asin, tld) {
+  const j = await fetchJsonAny('https://api.audible.' + tld + '/1.0/catalog/products/' + asin + '?response_groups=' + AB_GROUPS + '&image_sizes=500,1024', 12000, (x) => x && x.product);
+  return j ? mapAudible(j.product, tld) : null;
+}
+async function audibleSearch(q, tld) {
+  tld = tld || 'com.br';
+  const j = await fetchJsonAny('https://api.audible.' + tld + '/1.0/catalog/products?keywords=' + encodeURIComponent(q) + '&num_results=12&products_sort_by=Relevance&response_groups=' + AB_GROUPS + '&image_sizes=500', 12000, (x) => x && Array.isArray(x.products));
+  return j ? j.products.map((p) => mapAudible(p, tld)).filter(Boolean) : [];
+}
+/* Apple Books (iTunes): capas quadradas de audiobooks em 600 px; JSONP se o CORS falhar */
+function jsonp(url, ms) {
+  return new Promise((resolve) => {
+    const cb = '__cl_jsonp' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const sc = document.createElement('script');
+    const t = setTimeout(() => fin(null), ms || 9000);
+    function fin(v) { clearTimeout(t); try { delete window[cb]; } catch (e) { window[cb] = undefined; } sc.remove(); resolve(v); }
+    window[cb] = (data) => fin(data);
+    sc.onerror = () => fin(null);
+    sc.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + cb;
+    document.head.appendChild(sc);
+  });
+}
+async function itunesAudio(q) {
+  const u = 'https://itunes.apple.com/search?media=audiobook&country=br&limit=15&term=' + encodeURIComponent(q);
+  let j = null;
+  try { j = await fetchJSON(u, 8000); } catch (e) { j = await jsonp(u, 9000); }
+  return ((j && j.results) || []).map((x) => ({ title: x.collectionName, author: x.artistName,
+    cover: String(x.artworkUrl100 || x.artworkUrl60 || '').replace(/\/\d+x\d+(bb)?\.(jpg|png)$/i, '/600x600bb.jpg') })).filter((x) => x.cover);
+}
+/* mensagem de "Compartilhar" do app (ex.: Estou ouvindo "Livro" de Autor no Audible: link) */
+function shareHints(txt, url) {
+  const t = String(txt || '').replace(url || '', ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return {};
+  let m = t.match(/["“'«]([^"”'»]{2,120})["”'»](?:\s*,?\s*(?:de|by|por)\s+([^,.;:!?]+?))?(?:\s*,?\s*(?:narrad[oa] por|narrated by)\s+([^,.;:!?]+?))?(?=\s*(?:,|\.|;|:|!|\bno\b|\bna\b|\bon\b|\bem\b|$))/i);
+  if (!m) m = t.match(/(?:ouvindo|ouça|escute|escutando|confira|listen to|listening to|check out)\s+(.{2,100}?)\s+(?:de|by|por)\s+([^,.;:!?]+?)(?:\s*,?\s*(?:narrad[oa] por|narrated by)\s+([^,.;:!?]+?))?(?=\s*(?:,|\.|;|:|!|\bno\b|\bna\b|\bon\b|$))/i);
+  return m ? { title: m[1].trim(), author: (m[2] || '').trim(), narrator: (m[3] || '').trim() } : {};
+}
+const hasLabels = (t) => new RegExp('(?:' + [L_AUTHOR, L_NARR, L_PUB, L_DUR].join('|') + ')\\s*[:：]', 'i').test(String(t || ''));
+const mergeAudio = (a, b) => { if (!a) return b; if (!b) return a; const r = Object.assign({}, a); ['title', 'author', 'narrator', 'publisher', 'durationSec', 'cover', 'asin', 'link'].forEach((k) => { if (!r[k] && b[k]) r[k] = b[k]; }); return r; };
 let abImportSeq = 0;
 async function importAudioLink(raw) {
   const st = $('#abImpStatus');
@@ -2394,24 +2559,40 @@ async function importAudioLink(raw) {
   if (!txt) { toast('Cole o link da página do audiobook.'); return; }
   const url = ((txt.match(/https?:\/\/[^\s<>"']+/i) || [''])[0]).replace(/[)\].,;]+$/, '');
   const seq = ++abImportSeq;
+  const extra = url ? txt.replace(url, '').trim() : txt;
   let r = null;
-  const isTextOnly = !url || txt.replace(url, '').trim().length > 80; // texto da página colado
-  if (isTextOnly) r = parseAudioText(txt, url);
+  if (!url) r = parseAudioText(txt, '');                 // só o texto da página colado
   else {
     if (!navigator.onLine) { say('Sem internet. Conecte-se ou cole o texto da página.'); return; }
-    say('<span class="status-line"><span class="spinner"></span>Lendo a página do ' + esc(platformOf(url) || 'site') + '…</span>');
-    r = await fetchAudioInfo(url);
+    say('<span class="status-line"><span class="spinner"></span>Lendo os dados do ' + esc(platformOf(url) || 'site') + '…</span>');
+    const isAud = platformOf(url) === 'Audible';
+    const asin = asinOf(url);
+    const tld = audibleTld(url);
+    const apiJob = isAud && asin ? audibleProduct(asin, tld) : Promise.resolve(null);
+    const pageJob = fetchAudioInfo(url);
+    r = await apiJob;
+    if (!(r && r.title && r.durationSec && r.cover)) {
+      const pg = await pageJob;
+      r = mergeAudio(r, pg);
+      if (isAud && !asin && pg && pg.asin) r = mergeAudio(r, await audibleProduct(pg.asin, tld)); // link curto adbl.co
+    }
+    if (r) { r = finishAudio(r, url); if (!r.title) r = null; }
     if (seq !== abImportSeq || !$('#abImpStatus')) return;
+    // texto que veio junto com o link: mensagem de "Compartilhar" ou trecho da página
+    const h = shareHints(extra, url);
+    if (h.title) r = mergeAudio(r, finishAudio(Object.assign({ durationSec: 0, cover: '', publisher: '' }, h), url));
+    else if (hasLabels(extra)) r = mergeAudio(r, parseAudioText(extra, url));
   }
   if (!r || !r.title) {
     say('<b>Não consegui ler essa página</b> (o site bloqueia leitura automática ou o leitor público está fora do ar). ' +
-      'Plano B: abra a página no navegador, toque em ⋮ › Compartilhar › Copiar texto, ou selecione todo o texto e copie, e cole aqui no lugar do link.');
+      'Plano B: abra a página no navegador, selecione e copie o texto (título, autor, duração) e cole aqui no lugar do link. Para a capa, use "Buscar capa".');
     return;
   }
   fillAudioForm(r);
   const got = [r.title && 'título', r.author && 'autor', r.narrator && 'narrador', r.durationSec && 'duração (' + clockHms(r.durationSec) + ')', (r.publisher || r.platform) && 'editora/plataforma', r.cover && 'capa'].filter(Boolean);
   const miss = [!r.author && 'autor', !r.durationSec && 'duração', !r.cover && 'capa'].filter(Boolean);
-  say('✓ Preenchido: ' + esc(got.join(', ')) + '.' + (miss.length ? ' Falta: ' + esc(miss.join(', ')) + ' — complete à mão' + (!r.cover ? ' ou use "Buscar capa"' : '') + '.' : ' Confira e toque em Salvar.'));
+  say('✓ Preenchido: ' + esc(got.join(', ')) + '.' + (miss.length ? ' Falta: ' + esc(miss.join(', ')) + ' — complete à mão' + (!r.cover ? ' e toque em "Buscar capa"' : '') + '.' : ' Confira e toque em Salvar.'));
+  if (!r.cover && $('#coverGrid')) openCoverSearch();
 }
 
 /* ======================= foto de perfil ======================= */
@@ -2691,6 +2872,9 @@ const handlers = {
   avatarPick: () => pickAvatar(),
   avatarDel: () => { delete S.settings.avatar; save(); renderAvatar(); closeDialog(); toast('Foto removida.'); },
   coverSearch: () => openCoverSearch(),
+  coverQ: () => { const q = $('#coverQ'); openCoverSearch(q ? q.value : ''); },
+  coverGoogle: () => openGoogleImages(),
+  coverPaste: () => pasteCover(),
   coverPick: (el) => pickCover(el.dataset.url),
   coverPhoto: () => pickCoverFile(),
   srcTab: (el) => { srcTab = el.dataset.src === 'cat' ? 'cat' : 'amazon'; renderBooks(); },
@@ -2782,6 +2966,9 @@ document.addEventListener('submit', (e) => {
   else if (kind === 'jump') { const q = parseInt(new FormData(f).get('page'), 10); closeDialog(); if (q) jumpTo(q); }
 });
 document.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('.hms input')) hmsTyping(e.target); });
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target && e.target.id === 'coverQ') { e.preventDefault(); openCoverSearch(e.target.value); }
+});
 document.addEventListener('paste', (e) => {
   if (!e.target || e.target.id !== 'f-link') return;
   setTimeout(() => { const v = e.target.value.trim(); if (/^https?:\/\/\S+$/i.test(v)) importAudioLink(v); }, 0);

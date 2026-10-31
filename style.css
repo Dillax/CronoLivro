@@ -739,3 +739,8 @@ body.calm .topbar::after, body.calm .tabbar::before { display: none; }
 .ab-link .hint b { color: #ffd38a; }
 .ab-link .status-line { padding: 4px 0; }
 a.ab-page { color: var(--diamond); font-size: .86rem; text-decoration: none; font-weight: 700; }
+.cover-q { display: flex; gap: 8px; margin: 0 0 8px; }
+.cover-q input { flex: 1; min-width: 0; }
+.cover-q .btn { flex: none; }
+.cover-q svg, .dlg-cover-btns svg { width: 16px; height: 16px; }
+.cover-opts.sq .opt-img { aspect-ratio: 1; height: auto; object-fit: cover; }
