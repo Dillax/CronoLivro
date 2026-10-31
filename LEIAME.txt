@@ -1,4 +1,4 @@
-CronoLeitura v2.15 (PWA)
+CronoLeitura v2.16 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -76,6 +76,10 @@ BIBLIOTECA
   Na grade, toque na capa para ler; "Editar" abaixo de cada livro.
 
 CAPAS (sem servidor)
+- TROCAR CAPA COM UM TOQUE: toque na capa do livro (aba Ler) ou do audiobook (aba Áudio).
+  Aparecem todas as capas encontradas; toque na certa e ela é aplicada e salva na hora.
+- No cadastro/edição, tocar numa capa também aplica na hora (num cadastro novo ela entra
+  junto ao tocar em Salvar).
 - "Pesquisar na internet": mostra DENTRO do app as imagens do Bing, DuckDuckGo e Google para
   "título autor audiobook capa". Toque na imagem certa: o app baixa e aplica a capa (como o
   Smart AudioBook Player). Se o site da imagem estiver fora do ar, usa a miniatura da busca.

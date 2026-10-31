@@ -146,7 +146,7 @@ function save() {
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
 const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
 const anyById = (id) => bookById(id) || audioById(id);
-const APP_VERSION = '2.15.0';
+const APP_VERSION = '2.16.0';
 const DEVELOPER = 'Robert Simão dos Santos';
 const activeBook = () => bookById(S.activeBookId);
 
@@ -436,7 +436,7 @@ function renderRead() {
 
   el.innerHTML = greetingHtml() +
     '<div class="card">' +
-      '<div class="book-hero">' + coverHtml(coverSrc(b)) +
+      '<div class="book-hero"><button type="button" class="cover-btn" data-act="coverDlg" data-id="' + esc(b.id) + '" aria-label="Trocar capa">' + coverHtml(coverSrc(b)) + '<span class="cover-edit">Trocar capa</span></button>' +
         '<div class="hero-info"><h2>' + esc(b.title) + '</h2><p class="muted">' + esc(b.author || 'Autor não informado') + '</p>' +
         (edLine(b) ? '<p class="muted ed-line">' + esc(edLine(b)) + '</p>' : '') +
         '<div class="pageline">Página <strong>' + b.currentPage + '</strong> de ' + b.totalPages + '</div></div></div>' +
@@ -1341,7 +1341,7 @@ async function itunesCovers(q, audio) {
 async function openCoverSearch(qOverride, webFirst) {
   const grid = $('#coverGrid');
   if (!grid) return;
-  const audio = !!$('form[data-form="audio"]');
+  const audio = coverIsAudio();
   const typedQ = qOverride != null ? String(qOverride).trim() : '';
   let title = typedQ || (($('#f-title') || {}).value || '').trim();
   const author = typedQ ? '' : (($('#f-author') || {}).value || '').trim().split(',')[0];
@@ -1375,7 +1375,7 @@ async function openCoverSearch(qOverride, webFirst) {
     const list = items.slice().sort((a, b) => order(a.src) - order(b.src));
     const diag = SRC.map(([n]) => '<span class="' + (st[n] == null ? 'wait' : st[n] ? 'ok' : 'none') + '">' + esc(n) + (st[n] == null ? ' …' : ': ' + st[n]) + '</span>').join('');
     grid.innerHTML = box + '<p class="cover-diag">' + diag + '</p>' +
-      (list.length ? '<p class="hint">Toque na imagem certa: o app baixa e aplica a capa.</p><div class="cover-opts' + (audio ? ' sq' : '') + '">' +
+      (list.length ? '<p class="hint">' + list.length + (list.length === 1 ? ' capa encontrada' : ' capas encontradas') + '. Toque na certa: ela é aplicada na hora.</p><div class="cover-opts' + (audio ? ' sq' : '') + '">' +
         list.map((c) => '<button type="button" class="cover-opt" data-act="coverPick" data-url="' + esc(c.url) + '" data-thumb="' + esc(c.thumb || c.url) + '" title="' + esc(c.src) + '">' +
           '<img class="opt-img" src="' + esc(c.thumb || c.url) + '" alt="Capa (' + esc(c.src) + ')" loading="lazy" referrerpolicy="no-referrer"><span>' + esc(c.src) + '</span></button>').join('') + '</div>' : '') +
       (running ? '<div class="status-line"><div class="spinner"></div>Procurando em ' + running + (running === 1 ? ' fonte' : ' fontes') + '…</div>'
@@ -1400,6 +1400,23 @@ async function openCoverSearch(qOverride, webFirst) {
     });
   });
 }
+function openCoverDialog(id) {
+  const it = anyById(id);
+  if (!it) return;
+  const audio = !!audioById(id);
+  pendingCover = null;
+  openDialog('<div class="dlg-body" data-cover-for="' + esc(id) + '" data-cover-kind="' + (audio ? 'audio' : 'book') + '">' +
+    '<h2 id="dlgTitle">Trocar capa</h2><p class="muted">' + esc(it.title) + (it.author ? ' · ' + esc(it.author) : '') + '</p>' +
+    '<input type="hidden" id="f-title" value="' + esc(it.title) + '"><input type="hidden" id="f-author" value="' + esc(it.author || '') + '">' +
+    '<input type="hidden" name="isbn" value="' + esc(it.isbn || '') + '"><input type="hidden" name="cover" value="' + esc(it.cover || '') + '">' +
+    '<div class="dlg-cover"><div id="dlgCoverImg">' + coverHtml(coverSrc(it), audio ? 'sq' : '') + '</div>' +
+      '<div class="dlg-cover-side"><span class="muted" id="dlgCoverNote">Toque numa capa abaixo: ela é aplicada na hora.</span>' +
+      '<div class="dlg-cover-btns"><button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button>' +
+      '<button type="button" class="btn sm ghost" data-act="coverPaste">' + ICON.paste + ' Colar capa</button></div></div></div>' +
+    '<div id="coverGrid" class="cover-grid"></div>' +
+    '<div class="dlg-actions"><button type="button" class="btn" data-act="closeDlg">Fechar</button></div></div>');
+  openCoverSearch(null, false);
+}
 function openGoogleImages() {
   const t = (($('#f-title') || {}).value || '').trim();
   if (!t) { toast('Digite o título primeiro.'); const f = $('#f-title'); if (f) f.focus(); return; }
@@ -1416,7 +1433,7 @@ async function useCoverBlob(blob) {
   const jpg = await fileToJpeg(blob);
   if (!jpg) { toast('Não consegui abrir essa imagem.'); return false; }
   pendingCover = { blob: jpg, url: '' };
-  showPendingPreview(URL.createObjectURL(jpg), 'Capa colada: fica salva no celular ao tocar em Salvar.');
+  commitCover(URL.createObjectURL(jpg));
   return true;
 }
 async function pasteCover() {
@@ -1446,27 +1463,43 @@ function showPendingPreview(src, note) {
   const n = $('#dlgCoverNote');
   if (n) n.textContent = note;
 }
+const coverIsAudio = () => !!$('#dlg form[data-form="audio"], #dlg [data-cover-kind="audio"]');
+/* aplica a capa escolhida na hora: no livro/audiobook já salvo vai direto para ele; num
+ * cadastro novo fica escolhida e entra junto ao tocar em Salvar. */
+function commitCover(previewSrc) {
+  const host = $('#dlg [data-cover-for]');
+  const form = $('#dlg form[data-form="audio"], #dlg form[data-form="book"]');
+  const id = host ? host.dataset.coverFor : (form && form.dataset.id) || '';
+  const item = id ? anyById(id) : null;
+  const grid = $('#coverGrid');
+  if (grid) { grid.hidden = true; grid.innerHTML = ''; }
+  if (item) {
+    applyPendingCover(item);
+    const c = $('input[name="cover"]'); if (c) c.value = item.cover || '';
+    renderCurrent();
+    if (host) { closeDialog(); toast('Capa aplicada ✓'); return; }
+    showPendingPreview(coverSrc(item) || previewSrc, 'Capa aplicada ✓');
+    toast('Capa aplicada ✓');
+  } else {
+    showPendingPreview(previewSrc, 'Capa escolhida ✓ Ela entra junto ao tocar em Salvar.');
+  }
+}
 async function pickCover(url, thumb) {
   const grid = $('#coverGrid');
   if (grid) grid.querySelectorAll('.cover-opt').forEach((b) => b.classList.toggle('sel', b.dataset.url === url));
   showPendingPreview(thumb || url, 'Baixando a capa…');
   let blob = await grabImage(url);
   if (!blob && thumb && thumb !== url) blob = await grabImage(thumb);
-  if (blob) {
-    pendingCover = { blob, url };
-    showPendingPreview(URL.createObjectURL(blob), 'Capa pronta: fica salva no celular ao tocar em Salvar.');
-  } else {
-    pendingCover = { url };
-    showPendingPreview(url, 'Este site não deixa copiar a imagem: será salvo o link (o app guarda em cache para ver offline).');
-  }
   const c = $('input[name="cover"]'); if (c) c.value = url;
+  if (blob) { pendingCover = { blob, url }; commitCover(URL.createObjectURL(blob)); }
+  else { pendingCover = { url }; commitCover(thumb || url); }
 }
 function pickCoverFile() {
   chooseFile('image/*', async (f) => {
     const blob = await fileToJpeg(f);
     if (!blob) { toast('Não consegui abrir essa imagem.'); return; }
     pendingCover = { blob, url: '' };
-    showPendingPreview(URL.createObjectURL(blob), 'Foto pronta: fica salva no celular ao tocar em Salvar.');
+    commitCover(URL.createObjectURL(blob));
   });
 }
 
@@ -2101,7 +2134,7 @@ function renderAudio() {
         : '<button class="btn primary xl" type="button" data-act="abPlay">' + ICON.play + (mine ? ' Continuar a ouvir' : ' Começar a ouvir') + '</button>' +
           (mine ? '<button class="btn block" type="button" data-act="abStop">' + ICON.stop + ' Encerrar sessão</button>' : ''));
     cur = '<div class="card ab-now">' +
-      '<div class="ab-hero">' + coverHtml(coverSrc(a), 'sq') +
+      '<div class="ab-hero"><button type="button" class="cover-btn" data-act="coverDlg" data-id="' + esc(a.id) + '" aria-label="Trocar capa">' + coverHtml(coverSrc(a), 'sq') + '<span class="cover-edit">Trocar capa</span></button>' +
         '<div class="hero-info"><h2>' + esc(a.title) + '</h2><p class="muted">' + esc(a.author || 'Autor não informado') + '</p>' +
         (a.narrator ? '<p class="muted ed-line">Narração: ' + esc(a.narrator) + '</p>' : '') +
         (a.link ? '<p class="ed-line"><a class="ab-page" href="' + esc(a.link) + '" target="_blank" rel="noopener noreferrer">Página no ' + esc(platformOf(a.link)) + ' ↗</a></p>' : '') +
@@ -2972,6 +3005,7 @@ const handlers = {
   coverQ: () => { const q = $('#coverQ'); openCoverSearch(q ? q.value : ''); },
   coverGoogle: () => openGoogleImages(),
   coverPaste: () => pasteCover(),
+  coverDlg: (el) => openCoverDialog(el.dataset.id),
   coverPick: (el) => pickCover(el.dataset.url, el.dataset.thumb),
   coverPhoto: () => pickCoverFile(),
   srcTab: (el) => { srcTab = el.dataset.src === 'cat' ? 'cat' : 'amazon'; renderBooks(); },

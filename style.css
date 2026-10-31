@@ -521,7 +521,7 @@ input, select, textarea { background: rgba(0, 0, 0, 0.18); border-color: rgba(21
 .dlg-cover-btns { display: flex; flex-wrap: wrap; gap: 8px; }
 .dlg-cover-btns svg { width: 16px; height: 16px; }
 .cover-grid { margin: 0 0 12px; }
-.cover-opts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 8px; max-height: 46vh; overflow-y: auto; padding: 2px; }
+.cover-opts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px 8px; padding: 2px; }
 .cover-opt { display: flex; flex-direction: column; gap: 3px; align-items: stretch; background: none; border: 0; padding: 0; cursor: pointer; color: var(--muted); font: inherit; font-size: .62rem; text-align: center; }
 .cover-opt img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 6px; border: 1px solid rgba(205, 238, 255, 0.25); background: rgba(120, 200, 255, 0.04); }
 .cover-opt.sel img { border-color: #fff; box-shadow: 0 0 0 2px var(--diamond), 0 0 16px rgba(41, 197, 255, .7); }
@@ -748,3 +748,6 @@ a.ab-page { color: var(--diamond); font-size: .86rem; text-decoration: none; fon
 .cover-diag .ok { color: #8ff0c0; }
 .cover-diag .none { opacity: .6; }
 .cover-more a { color: var(--diamond); }
+.cover-btn { position: relative; flex: none; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 10px; color: inherit; font: inherit; }
+.cover-btn .cover-edit { position: absolute; left: 50%; bottom: 6px; transform: translateX(-50%); white-space: nowrap; font-size: .62rem; font-weight: 700;
+  padding: 2px 7px; border-radius: 8px; background: rgba(0, 10, 20, .72); color: #e6fbff; border: 1px solid rgba(160, 230, 255, .4); }
