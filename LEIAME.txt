@@ -1,4 +1,4 @@
-CronoLeitura v2.11 (PWA)
+CronoLeitura v2.12 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -41,8 +41,10 @@ Sem chave, o Google divide um limite único entre todos os sites sem chave, e el
 6. No app: Histórico > Google Livros > cole a chave. Sem cartão de crédito; ~1000 buscas/dia.
 
 AUDIOBOOKS (aba "Áudio")
-- Cadastre título, autor, narrador, editora/plataforma, capa (busca ou foto) e duração total (h:mm).
-- Progresso: tempo ouvido, tempo restante (como o Audible mostra) ou porcentagem.
+- Cadastre título, autor, narrador, editora/plataforma, capa (busca ou foto) e duração total
+  em três caixas: horas, minutos e segundos (ex.: 6 h 06 min 29 s), com teclado numérico.
+  Também dá para colar 6:06:29 ou 6h06min29s na caixa das horas: o app separa sozinho.
+- Progresso: tempo ouvido, tempo restante (como o Audible mostra), em h/min/s, ou porcentagem.
 - Mostra % ouvido, quanto falta, o tempo real de escuta na velocidade escolhida (0,8× a 3×) e a
   previsão de término pela meta de minutos por dia.
 - Cronômetro de escuta: Começar/Pausar/Encerrar soma o tempo × velocidade à posição do livro
@@ -50,6 +52,7 @@ AUDIOBOOKS (aba "Áudio")
 
 PERFIL E RODAPÉ
 - Toque no círculo do canto superior direito para colocar sua foto (fica no celular e vai no backup).
+  A foto é recortada em círculo automaticamente.
   Sem internet, o contorno do círculo fica âmbar.
 - Rodapé: versão do app e "Desenvolvido por Robert Simão dos Santos".
 
@@ -67,6 +70,9 @@ DESEMPENHO
 - Se o celular ainda travar: Histórico > Preferências > desmarque "Efeitos de luz".
 
 HÁBITOS (aba "Hábitos")
+- No topo: Livros | Audiobooks | Tudo. Cada um tem meta, semana, calendário, evolução,
+  horários e lista próprios. Em Audiobooks a evolução compara a duração de cada escuta e
+  o "avanço" é o tempo do livro (já com a velocidade). Cada aba guarda a sua meta.
 - Meta de leitura: diária, semanal, mensal ou anual, em minutos, páginas ou livros
   (em "Alterar meta"). Mostra o progresso, sequência de dias seguidos e melhor sequência.
 - Esta semana: quantos dias leu (de 7) e minutos por dia; toque na barra para ver as sessões.

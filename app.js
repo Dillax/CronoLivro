@@ -46,7 +46,8 @@ const ICON = {
   book: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6l8-1.5V19L3 20.5zM13 4.5L21 6v14.5L13 19z"/></svg>',
   camera: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3 7.2 5H4a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>',
   paste: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3h-4.2A3 3 0 0 0 12 1a3 3 0 0 0-2.8 2H5a2 2 0 0 0-2 2v15a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm-7 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm7 17H5V5h2v3h10V5h2z"/></svg>',
-  search: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>'
+  search: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15.5 14h-.8l-.3-.3A6.5 6.5 0 1 0 14 15.5l.3.3v.8l5 5 1.5-1.5-5-5zm-6 0a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg>',
+  headphones: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 0 0-9 9v6a3 3 0 0 0 3 3h2v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h2a3 3 0 0 0 3-3v-6a9 9 0 0 0-9-9z"/></svg>'
 };
 
 /* ======================= estado ======================= */
@@ -136,14 +137,16 @@ function save() {
   try {
     S.timer.hb = Date.now();
     localStorage.setItem(KEY, JSON.stringify(S));
+    return true;
   } catch (e) {
     if (!saveWarned) { saveWarned = true; toast('Não foi possível salvar os dados neste navegador.'); }
+    return false;
   }
 }
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
 const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
 const anyById = (id) => bookById(id) || audioById(id);
-const APP_VERSION = '2.11.0';
+const APP_VERSION = '2.12.0';
 const DEVELOPER = 'Robert Simão dos Santos';
 const activeBook = () => bookById(S.activeBookId);
 
@@ -1194,14 +1197,10 @@ function grabImage(url) {
     img.src = u;
   });
 }
-function fileToJpeg(file) {
-  return new Promise((res) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => { imageToJpeg(img).then((b) => { URL.revokeObjectURL(url); res(b); }); };
-    img.onerror = () => { URL.revokeObjectURL(url); res(null); };
-    img.src = url;
-  });
+async function fileToJpeg(file) {
+  const im = await decodeImage(file);
+  if (!im) return null;
+  try { return await imageToJpeg(im.src); } catch (e) { return null; } finally { if (im.url) URL.revokeObjectURL(im.url); if (im.src.close) im.src.close(); }
 }
 function coverNote(b, v) {
   if (b && b.coverLocal) return 'Capa salva no celular.';
@@ -1290,18 +1289,12 @@ async function pickCover(url) {
   const c = $('input[name="cover"]'); if (c) c.value = url;
 }
 function pickCoverFile() {
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = 'image/*';
-  inp.onchange = async () => {
-    const f = inp.files && inp.files[0];
-    if (!f) return;
+  chooseFile('image/*', async (f) => {
     const blob = await fileToJpeg(f);
     if (!blob) { toast('Não consegui abrir essa imagem.'); return; }
     pendingCover = { blob, url: '' };
     showPendingPreview(URL.createObjectURL(blob), 'Foto pronta: fica salva no celular ao tocar em Salvar.');
-  };
-  inp.click();
+  });
 }
 
 /* ======================= tela: Livros ======================= */
@@ -1452,7 +1445,64 @@ const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); r
 const fmtMin = (sec) => { const m = Math.round(sec / 60); return m >= 60 ? Math.floor(m / 60) + ' h ' + pad(m % 60) : m + ' min'; };
 const hhmm = (ts) => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
 const daySec = (k) => (S.daily[k] || 0) + (k === dateKey() ? unflushedSec() : 0);
-const hab = { range: '30', month: null, day: null, evo: 'day' };
+const hab = { range: '30', month: null, day: null, evo: 'day', kind: 'books' };
+
+/* ---------- livros × audiobooks: cada aba de Hábitos lê de uma "fonte" ---------- */
+const HAB_KINDS = { books: 'Livros', audio: 'Audiobooks', all: 'Tudo' };
+const HAB_NOUN = { books: 'leitura', audio: 'escuta', all: 'leitura ou escuta' };
+function listenDaily() {
+  const m = {};
+  (S.listenLog || []).forEach((l) => { const k = dateKey(new Date(l.start)); m[k] = (m[k] || 0) + (l.sec || 0); });
+  if (S.listen && S.listen.status !== 'idle') { const k = dateKey(); m[k] = (m[k] || 0) + listenNowMs() / 1000; }
+  return m;
+}
+function listenSessions() {
+  const out = (S.listenLog || []).map((l) => ({ id: l.id, bookId: l.abId, start: l.start, end: l.end, sec: l.sec, pages: 0, gain: l.gain || 0, speed: l.speed || 1, audio: true }));
+  const L = S.listen;
+  if (L && L.status !== 'idle') {
+    const a = audioById(L.abId);
+    const sec = listenNowMs() / 1000;
+    const sp = (a && a.speed) || 1;
+    out.push({ id: L.id, bookId: L.abId, start: L.startedAt || Date.now() - sec * 1000, end: Date.now(), sec, pages: 0, gain: sec * sp, speed: sp, audio: true, live: true });
+  }
+  return out.filter((x) => x.sec > 0 && isFinite(x.start)).sort((a, b) => a.start - b.start);
+}
+function habSource(kind) {
+  kind = kind || 'books';
+  const ld = kind === 'books' ? {} : listenDaily();
+  const useB = kind !== 'audio';
+  let cache = null;
+  return {
+    kind,
+    secOf: (k) => (useB ? daySec(k) : 0) + (ld[k] || 0),
+    get sessions() {
+      if (!cache) cache = kind === 'books' ? allSessions() : kind === 'audio' ? listenSessions() : allSessions().concat(listenSessions()).sort((a, b) => a.start - b.start);
+      return cache;
+    },
+    dayKeys: () => (useB ? Object.keys(S.daily) : []).concat(Object.keys(ld), [dateKey()]).filter((k, i, a) => a.indexOf(k) === i)
+  };
+}
+let H = habSource('books');
+/* "12 págs." para livros, "+40 min do livro" para audiobooks */
+function amtTxt(list, kind) {
+  const p = list.reduce((a, x) => a + (x.pages || 0), 0);
+  const g = list.reduce((a, x) => a + (x.gain || 0), 0);
+  const parts = [];
+  if (kind !== 'audio') parts.push(nfmt(p) + ' págs.');
+  if (kind === 'audio' || (kind === 'all' && g > 0)) parts.push('+' + hms(g) + ' do livro');
+  return parts.join(' · ');
+}
+const sessAmt = (x) => amtTxt([x], x.audio ? 'audio' : 'books');
+const inRange = (list, a, b) => list.filter((x) => x.start >= +a && x.start < +b);
+function goalOf(kind) {
+  kind = kind || 'books';
+  const key = kind === 'audio' ? 'goalAudio' : kind === 'all' ? 'goalAll' : 'goal';
+  let g = S.settings[key];
+  if (!g || !g.period) g = S.settings[key] = kind === 'audio' ? { period: 'day', unit: 'min', value: 30 } : kind === 'all' ? { period: 'week', unit: 'min', value: 300 } : defaults().settings.goal;
+  if (kind !== 'books' && g.unit === 'pages') g.unit = 'min';
+  return g;
+}
+const goalUnitTxt = (kind, unit, n) => (unit === 'min' ? 'minutos' : unit === 'pages' ? 'páginas' : n === 1 ? (kind === 'audio' ? 'audiobook' : kind === 'all' ? 'livro ou audiobook' : 'livro') : kind === 'audio' ? 'audiobooks' : kind === 'all' ? 'livros e audiobooks' : 'livros');
 
 function allSessions() {
   const out = [];
@@ -1485,9 +1535,10 @@ function allSessions() {
 function pagesBetween(a, b) {
   return allSessions().reduce((p, x) => p + (x.start >= +a && x.start < +b ? x.pages : 0), 0);
 }
-function secBetween(a, b) {
+function secBetween(a, b, secOf) {
+  secOf = secOf || daySec;
   let s2 = 0;
-  for (let d = startOfDay(a); d < b; d = addDays(d, 1)) s2 += daySec(dateKey(d));
+  for (let d = startOfDay(a); d < b; d = addDays(d, 1)) s2 += secOf(dateKey(d));
   return s2;
 }
 function periodRange(period, now) {
@@ -1507,24 +1558,28 @@ function defaultGoal(period, unit) {
   const t = { min: { day: 30, week: 210, month: 900, year: 10000 }, pages: { day: 20, week: 140, month: 600, year: 7000 }, books: { day: 1, week: 1, month: 2, year: 24 } };
   return t[unit][period];
 }
-function goalProgress() {
-  const g = S.settings.goal;
+function goalProgress(kind, src) {
+  kind = kind || 'books';
+  const g = goalOf(kind);
   const [a, b] = periodRange(g.period);
   let done;
-  if (g.unit === 'min') done = secBetween(a, b) / 60;
+  if (g.unit === 'min') done = secBetween(a, b, (src || habSource(kind)).secOf) / 60;
   else if (g.unit === 'pages') done = pagesBetween(a, b);
-  else done = S.books.filter((bk) => bk.finished && bk.finishedAt >= +a && bk.finishedAt < +b).length;
+  else {
+    const fin = (x) => x.finished && x.finishedAt >= +a && x.finishedAt < +b;
+    done = (kind !== 'audio' ? S.books.filter(fin).length : 0) + (kind !== 'books' ? (S.audio || []).filter(fin).length : 0);
+  }
   return { g, done, pct: clamp(done / Math.max(1, g.value), 0, 1) };
 }
 function goalLineHtml() {
-  const { g, done, pct } = goalProgress();
+  const { g, done, pct } = goalProgress('books');
   return '<p class="goal-line">Meta ' + GOAL_P[g.period].toLowerCase() + ': <b>' + nfmt(Math.floor(done)) + ' / ' + nfmt(g.value) + ' ' + GOAL_U[g.unit] + '</b>' +
     (pct >= 1 ? ' · <span class="ok-text">cumprida!</span>' : '') + '</p>';
 }
-function streaks() {
-  const keys = Object.keys(S.daily).filter((k) => daySec(k) >= 60).sort();
+function streaks(src) {
+  src = src || H;
+  const keys = src.dayKeys().filter((k) => src.secOf(k) >= 60).sort();
   const set = new Set(keys);
-  if (daySec(dateKey()) >= 60) set.add(dateKey());
   let cur = 0;
   let d = new Date();
   if (!set.has(dateKey(d))) d = addDays(d, -1);
@@ -1561,23 +1616,33 @@ function barsHtml(items, opts) {
 function renderHabits() {
   const el = $('#view-habits');
   const now = new Date();
-  const sessions = allSessions();
-  const { g, done, pct } = goalProgress();
-  const st = streaks();
+  const kind = hab.kind || 'books';
+  H = habSource(kind);
+  const isA = kind === 'audio';
+  const noun = HAB_NOUN[kind];
+  const sessions = H.sessions;
+  const { g, done, pct } = goalProgress(kind, H);
+  const st = streaks(H);
+  const uTxt = goalUnitTxt(kind, g.unit, g.value);
+  const nameOf = (x) => { const b = anyById(x.bookId); return b ? b.title : (x.audio ? 'Audiobook removido' : 'Livro removido'); };
+
+  const kindSeg = '<div class="seg hab-kind" role="tablist" aria-label="Tipo">' + Object.keys(HAB_KINDS).map((k) =>
+    '<button type="button" data-act="habKind" data-v="' + k + '" aria-selected="' + (k === kind) + '">' + (k === 'books' ? ICON.book + ' ' : k === 'audio' ? ICON.headphones + ' ' : '') + HAB_KINDS[k] + '</button>').join('') + '</div>';
 
   // ---- meta
   const seg = (act, cur, opts) => '<div class="seg seg-sm">' + Object.keys(opts).map((k) =>
     '<button type="button" data-act="' + act + '" data-v="' + k + '" aria-selected="' + (k === cur) + '">' + esc(opts[k]) + '</button>').join('') + '</div>';
-  const goalCard = '<div class="card"><h2>Meta de leitura</h2>' +
-    '<div class="goal-hero"><div class="goal-num"><strong>' + nfmt(Math.floor(done)) + '</strong><span>de ' + nfmt(g.value) + ' ' + GOAL_U[g.unit] + ' ' + GOAL_P_NOUN[g.period] + '</span></div>' +
+  const units = kind === 'books' ? { min: 'Minutos', pages: 'Páginas', books: 'Livros' } : { min: 'Minutos', books: isA ? 'Audiobooks' : 'Livros + áudio' };
+  const goalCard = '<div class="card"><h2>' + (isA ? 'Meta de escuta' : kind === 'all' ? 'Meta de leitura + escuta' : 'Meta de leitura') + '</h2>' +
+    '<div class="goal-hero"><div class="goal-num"><strong>' + nfmt(Math.floor(done)) + '</strong><span>de ' + nfmt(g.value) + ' ' + uTxt + ' ' + GOAL_P_NOUN[g.period] + '</span></div>' +
     '<div class="goal-pct' + (pct >= 1 ? ' done' : '') + '">' + Math.round(pct * 100) + '%</div></div>' +
     '<div class="progress goal-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.round(pct * 100) + '"><div style="width:' + (pct * 100).toFixed(1) + '%"></div></div>' +
-    '<p class="note">' + (pct >= 1 ? 'Meta cumprida! 🎉' : 'Faltam ' + nfmt(Math.ceil(g.value - done)) + ' ' + GOAL_U[g.unit] + '.') + '</p>' +
+    '<p class="note">' + (pct >= 1 ? 'Meta cumprida! 🎉' : 'Faltam ' + nfmt(Math.ceil(g.value - done)) + ' ' + uTxt + '.') + '</p>' +
     '<div class="streaks"><div class="metric"><span class="m-label">Sequência atual</span><strong>' + st.cur + (st.cur === 1 ? ' dia' : ' dias') + '</strong></div>' +
     '<div class="metric"><span class="m-label">Melhor sequência</span><strong>' + st.best + (st.best === 1 ? ' dia' : ' dias') + '</strong></div></div>' +
     '<details class="goal-edit"><summary>Alterar meta</summary>' +
       '<label>Período</label>' + seg('goalPeriod', g.period, GOAL_P) +
-      '<label>Medida</label>' + seg('goalUnit', g.unit, { min: 'Minutos', pages: 'Páginas', books: 'Livros' }) +
+      '<label>Medida</label>' + seg('goalUnit', g.unit, units) +
       '<label for="goalVal">Quantidade</label><div class="stepper"><button class="btn" type="button" data-act="goalStep" data-v="-1" aria-label="Diminuir">−</button>' +
       '<input id="goalVal" type="number" inputmode="numeric" min="1" value="' + g.value + '" data-change="goalValue"><button class="btn" type="button" data-act="goalStep" data-v="1" aria-label="Aumentar">+</button></div>' +
     '</details></div>';
@@ -1589,20 +1654,20 @@ function renderHabits() {
   for (let i = 0; i < 7; i++) {
     const d = addDays(w0, i);
     const k = dateKey(d);
-    const sec = daySec(k);
+    const sec = H.secOf(k);
     if (sec >= 60) daysRead++;
     const nS = sessions.filter((x) => dateKey(new Date(x.start)) === k).length;
     weekItems.push({ v: sec / 60, vl: Math.round(sec / 60) + '', l: WD[i], hl: k === dateKey(),
       tip: WD[i] + ' ' + d.getDate() + '/' + (d.getMonth() + 1) + ': ' + fmtMin(sec) + ' · ' + nS + (nS === 1 ? ' sessão' : ' sessões') });
   }
-  const lastWeekSec = secBetween(addDays(w0, -7), w0);
-  const thisWeekSec = secBetween(w0, addDays(w0, 7));
+  const lastWeekSec = secBetween(addDays(w0, -7), w0, H.secOf);
+  const thisWeekSec = secBetween(w0, addDays(w0, 7), H.secOf);
   const dailyGoalMin = g.unit === 'min' && g.period === 'day' ? g.value : 0;
   const weekCard = '<div class="card"><h2>Esta semana</h2>' +
-    '<div class="week-head"><div><strong class="big">' + daysRead + '</strong> de 7 dias com leitura</div>' +
+    '<div class="week-head"><div><strong class="big">' + daysRead + '</strong> de 7 dias com ' + noun + '</div>' +
     '<div class="muted">' + fmtMin(thisWeekSec) + ' · semana passada ' + fmtMin(lastWeekSec) + '</div></div>' +
-    barsHtml(weekItems, { cls: 'week-bars', label: 'Minutos lidos por dia nesta semana', values: true, min: 10, goal: dailyGoalMin, goalTip: dailyGoalMin + ' min/dia' }) +
-    '<p class="note">Toque numa barra para ver o tempo e quantas vezes leu no dia. Valores em minutos.</p></div>';
+    barsHtml(weekItems, { cls: 'week-bars', label: 'Minutos por dia nesta semana', values: true, min: 10, goal: dailyGoalMin, goalTip: dailyGoalMin + ' min/dia' }) +
+    '<p class="note">Toque numa barra para ver o tempo e quantas sessões teve no dia. Valores em minutos.</p></div>';
 
   // ---- calendário
   if (!hab.month) hab.month = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -1616,7 +1681,7 @@ function renderHabits() {
   for (let dn = 1; dn <= nDays; dn++) {
     const d = new Date(m0.getFullYear(), m0.getMonth(), dn);
     const k = dateKey(d);
-    const sec = daySec(k);
+    const sec = H.secOf(k);
     monthSec += sec;
     if (sec >= 60) monthDays++;
     const min = sec / 60;
@@ -1627,16 +1692,16 @@ function renderHabits() {
   if (hab.day) {
     const ds = sessions.filter((x) => dateKey(new Date(x.start)) === hab.day);
     const dd = new Date(hab.day + 'T12:00:00');
-    detail = '<div class="day-detail"><h3>' + esc(fmtDate(dd)) + '</h3><p class="muted">' + fmtMin(daySec(hab.day)) + ' de leitura · ' + ds.length + (ds.length === 1 ? ' sessão' : ' sessões') +
-      ' · ' + nfmt(ds.reduce((a, x) => a + x.pages, 0)) + ' págs.</p>' +
-      (ds.length ? ds.map((x) => { const b = bookById(x.bookId); return '<div class="session"><div class="s-main"><div class="s-title">' + esc(b ? b.title : 'Livro removido') + '</div>' +
-        '<div class="s-sub">' + hhmm(x.start) + '–' + hhmm(x.end) + (x.live ? ' (agora)' : '') + ' · ' + fmtMin(x.sec) + ' · ' + nfmt(x.pages) + ' págs.</div></div></div>'; }).join('')
+    detail = '<div class="day-detail"><h3>' + esc(fmtDate(dd)) + '</h3><p class="muted">' + fmtMin(H.secOf(hab.day)) + ' de ' + noun + ' · ' + ds.length + (ds.length === 1 ? ' sessão' : ' sessões') +
+      ' · ' + amtTxt(ds, kind) + '</p>' +
+      (ds.length ? ds.map((x) => '<div class="session"><div class="s-main"><div class="s-title">' + (kind === 'all' ? (x.audio ? '🎧 ' : '📖 ') : '') + esc(nameOf(x)) + '</div>' +
+        '<div class="s-sub">' + hhmm(x.start) + '–' + hhmm(x.end) + (x.live ? ' (agora)' : '') + ' · ' + fmtMin(x.sec) + ' · ' + sessAmt(x) + '</div></div></div>').join('')
         : '<p class="note">Sem sessões registradas neste dia.</p>') + '</div>';
   }
   const calCard = '<div class="card"><div class="cal-head"><button class="btn sm ghost" type="button" data-act="calNav" data-v="-1" aria-label="Mês anterior">‹</button>' +
     '<h2>' + MONTHS[m0.getMonth()].replace(/^./, (c) => c.toUpperCase()) + ' ' + m0.getFullYear() + '</h2>' +
     '<button class="btn sm ghost" type="button" data-act="calNav" data-v="1" aria-label="Próximo mês">›</button></div>' +
-    '<p class="muted cal-sum">' + monthDays + ' dias com leitura · ' + fmtMin(monthSec) + '</p>' +
+    '<p class="muted cal-sum">' + monthDays + ' dias com ' + noun + ' · ' + fmtMin(monthSec) + '</p>' +
     '<div class="cal">' + cells + '</div>' +
     '<div class="cal-legend"><span>menos</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>mais</span><span class="muted">(1 · 10 · 30 · 60+ min)</span></div>' +
     detail + '</div>';
@@ -1644,15 +1709,17 @@ function renderHabits() {
   // ---- período (filtro) + resumo + horários + livros
   const r0 = rangeStart();
   const rs = sessions.filter((x) => x.start >= +r0);
-  const rSec = secBetween(r0 < new Date(2000, 0, 1) ? (Object.keys(S.daily).sort()[0] ? new Date(Object.keys(S.daily).sort()[0] + 'T00:00:00') : now) : r0, addDays(startOfDay(now), 1));
-  const rPages = pagesBetween(r0, Date.now() + 1);
-  const rDays = new Set(Object.keys(S.daily).filter((k) => new Date(k + 'T12:00:00') >= r0 && daySec(k) >= 60)).size;
+  const keys = H.dayKeys().filter((k) => H.secOf(k) > 0).sort();
+  const rSec = secBetween(r0 < new Date(2000, 0, 1) ? (keys[0] ? new Date(keys[0] + 'T00:00:00') : now) : r0, addDays(startOfDay(now), 1), H.secOf);
+  const rDays = H.dayKeys().filter((k) => new Date(k + 'T12:00:00') >= r0 && H.secOf(k) >= 60).length;
   const filter = '<div class="seg range-seg" role="tablist" aria-label="Período">' + [['7', '7 dias'], ['30', '30 dias'], ['365', '12 meses'], ['all', 'Tudo']].map(([k, l]) =>
     '<button type="button" data-act="habRange" data-v="' + k + '" aria-selected="' + (hab.range === k) + '">' + l + '</button>').join('') + '</div>';
+  const pagesM = '<div class="metric"><span class="m-label">Páginas</span><strong>' + nfmt(pagesBetween(r0, Date.now() + 1)) + '</strong></div>';
+  const gainM = '<div class="metric"><span class="m-label">Avanço nos audiobooks</span><strong>' + hms(rs.reduce((a, x) => a + (x.gain || 0), 0)) + '</strong><span class="m-sub">tempo do livro (com a velocidade)</span></div>';
   const summary = '<div class="card"><h2>Resumo do período</h2><div class="metrics">' +
-    '<div class="metric"><span class="m-label">Tempo lendo</span><strong>' + fmtMin(rSec) + '</strong></div>' +
-    '<div class="metric"><span class="m-label">Páginas</span><strong>' + nfmt(rPages) + '</strong></div>' +
-    '<div class="metric"><span class="m-label">Dias com leitura</span><strong>' + rDays + '</strong></div>' +
+    '<div class="metric"><span class="m-label">' + (isA ? 'Tempo ouvindo' : kind === 'all' ? 'Tempo lendo + ouvindo' : 'Tempo lendo') + '</span><strong>' + fmtMin(rSec) + '</strong></div>' +
+    (kind === 'books' ? pagesM : isA ? gainM : pagesM + gainM) +
+    '<div class="metric"><span class="m-label">Dias com ' + noun + '</span><strong>' + rDays + '</strong></div>' +
     '<div class="metric"><span class="m-label">Sessões</span><strong>' + rs.length + '</strong><span class="m-sub">' + (rs.length ? 'média ' + fmtMin(rs.reduce((a, x) => a + x.sec, 0) / rs.length) : '') + '</span></div>' +
     '</div></div>';
 
@@ -1672,28 +1739,31 @@ function renderHabits() {
   const peak = hours.indexOf(Math.max(...hours));
   const hourItems = hours.map((v, h) => ({ v, vl: '', l: h % 3 === 0 ? h + 'h' : '', hl: v > 0 && h === peak, tip: h + 'h–' + (h + 1) + 'h: ' + Math.round(v) + ' min' }));
   const partOfDay = (h) => (h < 6 ? 'de madrugada' : h < 12 ? 'de manhã' : h < 18 ? 'à tarde' : 'à noite');
-  const hourCard = '<div class="card"><h2>Quando você lê</h2>' +
-    (rs.length ? '<p class="muted">Você lê mais <b class="hl-text">' + partOfDay(peak) + '</b>, principalmente entre <b class="hl-text">' + peak + 'h e ' + (peak + 1) + 'h</b>.</p>' : '<p class="muted">Ainda sem sessões neste período.</p>') +
-    barsHtml(hourItems, { label: 'Minutos lidos por hora do dia', cls: 'hours', min: 1 }) +
-    '<p class="note">Minutos lidos em cada hora do dia, somando o período escolhido.</p></div>';
+  const verb = isA ? 'ouve' : kind === 'all' ? 'lê ou ouve' : 'lê';
+  const hourCard = '<div class="card"><h2>Quando você ' + verb + '</h2>' +
+    (rs.length ? '<p class="muted">Você ' + verb + ' mais <b class="hl-text">' + partOfDay(peak) + '</b>, principalmente entre <b class="hl-text">' + peak + 'h e ' + (peak + 1) + 'h</b>.</p>' : '<p class="muted">Ainda sem sessões neste período.</p>') +
+    barsHtml(hourItems, { label: 'Minutos por hora do dia', cls: 'hours', min: 1 }) +
+    '<p class="note">Minutos em cada hora do dia, somando o período escolhido.</p></div>';
 
   const byBook = new Map();
-  rs.forEach((x) => { const o = byBook.get(x.bookId) || { sec: 0, pages: 0, n: 0 }; o.sec += x.sec; o.pages += x.pages; o.n++; byBook.set(x.bookId, o); });
+  rs.forEach((x) => { const o = byBook.get(x.bookId) || { sec: 0, list: [], n: 0, audio: x.audio }; o.sec += x.sec; o.list.push(x); o.n++; byBook.set(x.bookId, o); });
   const books = Array.from(byBook.entries()).sort((a, b) => b[1].sec - a[1].sec);
   const bmax = books.length ? books[0][1].sec : 1;
-  const bookCard = '<div class="card"><h2>Livros no período</h2>' + (books.length ? books.map(([id, o]) => {
-    const b = bookById(id);
-    return '<div class="brow" data-tip="' + esc((b ? b.title : 'Livro removido') + ': ' + fmtMin(o.sec) + ', ' + o.pages + ' págs., ' + o.n + ' sessões') + '">' +
-      coverHtml(b ? coverSrc(b) : '', 'xs') +
-      '<div class="brow-main"><div class="brow-title">' + esc(b ? b.title : 'Livro removido') + '</div>' +
+  const bookCard = '<div class="card"><h2>' + (isA ? 'Audiobooks' : kind === 'all' ? 'Livros e audiobooks' : 'Livros') + ' no período</h2>' + (books.length ? books.map(([id, o]) => {
+    const b = anyById(id);
+    const t = b ? b.title : (o.audio ? 'Audiobook removido' : 'Livro removido');
+    const amt = amtTxt(o.list, o.audio ? 'audio' : 'books');
+    return '<div class="brow" data-tip="' + esc(t + ': ' + fmtMin(o.sec) + ', ' + amt + ', ' + o.n + ' sessões') + '">' +
+      coverHtml(b ? coverSrc(b) : '', 'xs' + (o.audio ? ' sq' : '')) +
+      '<div class="brow-main"><div class="brow-title">' + (kind === 'all' ? (o.audio ? '🎧 ' : '📖 ') : '') + esc(t) + '</div>' +
       '<div class="brow-track"><div style="width:' + Math.max(3, (o.sec / bmax) * 100).toFixed(1) + '%"></div></div>' +
-      '<div class="brow-sub">' + fmtMin(o.sec) + ' · ' + nfmt(o.pages) + ' págs. · ' + o.n + (o.n === 1 ? ' sessão' : ' sessões') + '</div></div></div>';
-  }).join('') : '<p class="muted">Nenhum livro lido neste período.</p>') + '</div>';
+      '<div class="brow-sub">' + fmtMin(o.sec) + ' · ' + amt + ' · ' + o.n + (o.n === 1 ? ' sessão' : ' sessões') + '</div></div></div>';
+  }).join('') : '<p class="muted">Nada neste período.</p>') + '</div>';
 
-  // ---- evolução: dia a dia, entre leituras e por semana
+  // ---- evolução: dia a dia, entre sessões e por semana
   const evoCard = evolutionCard(sessions, now, w0);
-  el.innerHTML = goalCard + weekCard + calCard + '<div class="section-title">Período</div>' + filter + summary + hourCard + bookCard;
-  const weekEl = el.children[1];
+  el.innerHTML = kindSeg + goalCard + weekCard + calCard + '<div class="section-title">Período</div>' + filter + summary + hourCard + bookCard;
+  const weekEl = el.children[2];
   if (weekEl) weekEl.insertAdjacentHTML('afterend', evoCard); else el.insertAdjacentHTML('beforeend', evoCard);
 }
 
@@ -1712,82 +1782,79 @@ function deltaHtml(cur, prev, unit, digits) {
 const speedOf = (x) => (x.sec >= 60 && x.pages > 0 ? x.pages / (x.sec / 3600) : null);
 const ddmm = (d) => pad(d.getDate()) + '/' + pad(d.getMonth() + 1);
 function evolutionCard(sessions, now, w0) {
-  // destaques
+  const kind = H.kind;
+  const isA = kind === 'audio';
+  // livros: ritmo em págs/h; audiobooks: duração de cada escuta em minutos
+  const metric = isA ? (x) => (x.sec >= 60 ? x.sec / 60 : null) : speedOf;
+  const mU = isA ? 'min' : 'págs/h';
+  const dayAmt = (d) => amtTxt(inRange(sessions, startOfDay(d), addDays(startOfDay(d), 1)), kind);
+  const nameOf = (x) => { const b = anyById(x.bookId); return b ? b.title : (x.audio ? 'Audiobook removido' : 'Livro removido'); };
   const todayK = dateKey(now);
-  const yK = dateKey(addDays(now, -1));
-  const tSec = daySec(todayK);
-  const ySec = daySec(yK);
-  const tPages = pagesBetween(startOfDay(now), addDays(startOfDay(now), 1));
-  const yPages = pagesBetween(startOfDay(addDays(now, -1)), startOfDay(now));
-  const sp = sessions.filter((x) => speedOf(x) != null);
+  const tSec = H.secOf(todayK);
+  const ySec = H.secOf(dateKey(addDays(now, -1)));
+  const sp = sessions.filter((x) => metric(x) != null);
   const lastS = sp[sp.length - 1];
   const prevS = sp[sp.length - 2];
   const tiles = '<div class="evo-tiles">' +
     '<div class="metric"><span class="m-label">Hoje × ontem</span><strong>' + fmtMin(tSec) + '</strong>' +
-      '<span class="m-sub">' + (tSec < 60 ? '<span class="delta flat">ainda não leu hoje</span>' : deltaHtml(tSec / 60, ySec / 60, 'min')) + '</span><span class="m-sub">ontem: ' + fmtMin(ySec) + ' · ' + nfmt(yPages) + ' págs.</span></div>' +
-    '<div class="metric"><span class="m-label">Ritmo da última leitura</span><strong>' + (lastS ? nfmt(Math.round(speedOf(lastS))) + ' págs/h' : '—') + '</strong>' +
-      '<span class="m-sub">' + (lastS ? deltaHtml(speedOf(lastS), prevS ? speedOf(prevS) : null, 'págs/h') : 'leia com o cronômetro') + '</span>' +
-      '<span class="m-sub">' + (prevS ? 'anterior: ' + nfmt(Math.round(speedOf(prevS))) + ' págs/h' : '') + '</span></div></div>';
+      '<span class="m-sub">' + (tSec < 60 ? '<span class="delta flat">ainda nada hoje</span>' : deltaHtml(tSec / 60, ySec / 60, 'min')) + '</span><span class="m-sub">ontem: ' + fmtMin(ySec) + ' · ' + dayAmt(addDays(now, -1)) + '</span></div>' +
+    '<div class="metric"><span class="m-label">' + (isA ? 'Última escuta' : 'Ritmo da última leitura') + '</span><strong>' + (lastS ? nfmt(Math.round(metric(lastS))) + ' ' + mU : '—') + '</strong>' +
+      '<span class="m-sub">' + (lastS ? deltaHtml(metric(lastS), prevS ? metric(prevS) : null, mU) : isA ? 'use o cronômetro de escuta' : 'leia com o cronômetro') + '</span>' +
+      '<span class="m-sub">' + (prevS ? 'anterior: ' + nfmt(Math.round(metric(prevS))) + ' ' + mU : '') + '</span></div></div>';
 
-  const tabs = '<div class="seg seg-sm evo-seg">' + [['day', 'Dia a dia'], ['session', 'Entre leituras'], ['week', 'Semanas']].map(([k, l]) =>
+  const tabs = '<div class="seg seg-sm evo-seg">' + [['day', 'Dia a dia'], ['session', isA ? 'Entre escutas' : 'Entre leituras'], ['week', 'Semanas']].map(([k, l]) =>
     '<button type="button" data-act="evoTab" data-v="' + k + '" aria-selected="' + (hab.evo === k) + '">' + l + '</button>').join('') + '</div>';
 
   let body = '';
   if (hab.evo === 'day') {
-    // 14 dias: barras com valor, hoje em destaque
     const items = [];
     for (let i = 13; i >= 0; i--) {
       const d = addDays(startOfDay(now), -i);
-      const sec = daySec(dateKey(d));
-      const pg = pagesBetween(d, addDays(d, 1));
+      const sec = H.secOf(dateKey(d));
       items.push({ v: sec / 60, vl: String(Math.round(sec / 60)), l: i % 2 ? '' : String(d.getDate()), hl: i === 0,
-        tip: WD[d.getDay()] + ' ' + ddmm(d) + ': ' + fmtMin(sec) + ' · ' + nfmt(pg) + ' págs.' });
+        tip: WD[d.getDay()] + ' ' + ddmm(d) + ': ' + fmtMin(sec) + ' · ' + dayAmt(d) });
     }
-    // lista: cada dia de leitura comparado com o dia de leitura anterior
-    const days = Object.keys(S.daily).concat([todayK]).filter((k, i, a) => a.indexOf(k) === i && daySec(k) >= 60).sort().reverse();
+    const days = H.dayKeys().filter((k) => H.secOf(k) >= 60).sort().reverse();
     const rows = days.slice(0, 7).map((k, i) => {
       const d = new Date(k + 'T12:00:00');
-      const sec = daySec(k);
+      const sec = H.secOf(k);
       const prevK = days[i + 1];
-      const pg = pagesBetween(startOfDay(d), addDays(startOfDay(d), 1));
       return '<div class="evo-row"><div class="evo-when">' + WD[d.getDay()] + ' ' + ddmm(d) + '</div>' +
-        '<div class="evo-val">' + fmtMin(sec) + '<small>' + nfmt(pg) + ' págs.</small></div>' +
-        '<div class="evo-d">' + deltaHtml(sec / 60, prevK ? daySec(prevK) / 60 : null, 'min') + (prevK ? '<small>vs ' + ddmm(new Date(prevK + 'T12:00:00')) + '</small>' : '') + '</div></div>';
+        '<div class="evo-val">' + fmtMin(sec) + '<small>' + dayAmt(d) + '</small></div>' +
+        '<div class="evo-d">' + deltaHtml(sec / 60, prevK ? H.secOf(prevK) / 60 : null, 'min') + (prevK ? '<small>vs ' + ddmm(new Date(prevK + 'T12:00:00')) + '</small>' : '') + '</div></div>';
     }).join('');
-    body = '<p class="evo-cap">Minutos lidos por dia nos últimos 14 dias</p>' + barsHtml(items, { label: 'Minutos por dia, últimos 14 dias', values: true, min: 10 }) +
-      '<p class="evo-cap">Cada dia de leitura comparado ao dia de leitura anterior</p>' + (rows || '<p class="muted">Ainda sem dias de leitura.</p>');
+    body = '<p class="evo-cap">Minutos por dia nos últimos 14 dias</p>' + barsHtml(items, { label: 'Minutos por dia, últimos 14 dias', values: true, min: 10 }) +
+      '<p class="evo-cap">Cada dia comparado ao dia anterior com ' + HAB_NOUN[kind] + '</p>' + (rows || '<p class="muted">Ainda sem dias registrados.</p>');
   } else if (hab.evo === 'session') {
     const last = sp.slice(-12);
     const items = last.map((x, i) => {
-      const v = speedOf(x);
+      const v = metric(x);
       const d = new Date(x.start);
       return { v, vl: String(Math.round(v)), l: ddmm(d).slice(0, 2), hl: i === last.length - 1,
-        tip: ddmm(d) + ' ' + hhmm(x.start) + ': ' + Math.round(v) + ' págs/h · ' + fmtMin(x.sec) + ' · ' + x.pages + ' págs.' };
+        tip: ddmm(d) + ' ' + hhmm(x.start) + ': ' + Math.round(v) + ' ' + mU + ' · ' + fmtMin(x.sec) + ' · ' + sessAmt(x) };
     });
-    const avg = (arr) => (arr.length ? arr.reduce((a, x) => a + speedOf(x), 0) / arr.length : null);
-    const recent = sp.slice(-5);
-    const before = sp.slice(-10, -5);
-    const rA = avg(recent);
-    const bA = avg(before);
+    const avg = (arr) => (arr.length ? arr.reduce((a, x) => a + metric(x), 0) / arr.length : null);
+    const rA = avg(sp.slice(-5));
+    const bA = avg(sp.slice(-10, -5));
+    const what = isA ? 'escutas' : 'leituras';
     const head = rA != null && bA != null
-      ? '<p class="evo-head">Média das últimas 5 leituras: <b>' + nfmt(Math.round(rA)) + ' págs/h</b> ' + deltaHtml(rA, bA, 'págs/h') + ' sobre as 5 anteriores (' + nfmt(Math.round(bA)) + ').</p>'
-      : '<p class="evo-head">Faça mais algumas leituras cronometradas para comparar médias.</p>';
-    const rows = sp.slice(-6).reverse().map((x, i, arr) => {
+      ? '<p class="evo-head">Média das últimas 5 ' + what + ': <b>' + nfmt(Math.round(rA)) + ' ' + mU + '</b> ' + deltaHtml(rA, bA, mU) + ' sobre as 5 anteriores (' + nfmt(Math.round(bA)) + ').</p>'
+      : '<p class="evo-head">Faça mais algumas ' + what + ' cronometradas para comparar médias.</p>';
+    const rows = sp.slice(-6).reverse().map((x, i) => {
       const prev = sp[sp.length - 2 - i];
-      const b = bookById(x.bookId);
-      return '<div class="evo-row"><div class="evo-when">' + ddmm(new Date(x.start)) + ' ' + hhmm(x.start) + '<small>' + esc(b ? b.title : 'Livro removido') + '</small></div>' +
-        '<div class="evo-val">' + nfmt(Math.round(speedOf(x))) + ' págs/h<small>' + fmtMin(x.sec) + ' · ' + x.pages + ' págs.</small></div>' +
-        '<div class="evo-d">' + deltaHtml(speedOf(x), prev ? speedOf(prev) : null, '') + '</div></div>';
+      return '<div class="evo-row"><div class="evo-when">' + ddmm(new Date(x.start)) + ' ' + hhmm(x.start) + '<small>' + (kind === 'all' ? (x.audio ? '🎧 ' : '📖 ') : '') + esc(nameOf(x)) + '</small></div>' +
+        '<div class="evo-val">' + nfmt(Math.round(metric(x))) + ' ' + mU + '<small>' + fmtMin(x.sec) + ' · ' + sessAmt(x) + '</small></div>' +
+        '<div class="evo-d">' + deltaHtml(metric(x), prev ? metric(prev) : null, '') + '</div></div>';
     }).join('');
-    body = head + (items.length ? '<p class="evo-cap">Ritmo em cada leitura (páginas por hora), da mais antiga à mais recente</p>' + barsHtml(items, { label: 'Páginas por hora em cada leitura', values: true, min: 10 }) : '') +
-      '<p class="evo-cap">Cada leitura comparada à anterior</p>' + (rows || '<p class="muted">Ainda sem leituras com páginas marcadas.</p>');
+    body = head + (items.length ? '<p class="evo-cap">' + (isA ? 'Duração de cada escuta (minutos)' : 'Ritmo em cada leitura (páginas por hora)') + ', da mais antiga à mais recente</p>' + barsHtml(items, { label: isA ? 'Minutos em cada escuta' : 'Páginas por hora em cada leitura', values: true, min: 10 }) : '') +
+      '<p class="evo-cap">Cada sessão comparada à anterior</p>' + (rows || '<p class="muted">' + (isA ? 'Ainda sem escutas cronometradas.' : 'Ainda sem leituras com páginas marcadas.') + '</p>');
   } else {
     const weeks = [];
     for (let i = 11; i >= 0; i--) {
       const a = addDays(w0, -7 * i);
-      const sec = secBetween(a, addDays(a, 7));
+      const sec = secBetween(a, addDays(a, 7), H.secOf);
       weeks.push({ v: sec / 60, vl: String(Math.round(sec / 60)), l: i === 0 ? 'esta' : ddmm(a).slice(0, 2), hl: i === 0,
-        tip: 'Semana de ' + ddmm(a) + ': ' + fmtMin(sec) + ' · ' + nfmt(pagesBetween(a, addDays(a, 7))) + ' págs.' });
+        tip: 'Semana de ' + ddmm(a) + ': ' + fmtMin(sec) + ' · ' + amtTxt(inRange(sessions, a, addDays(a, 7)), kind) });
     }
     const s4 = weeks.slice(-4).reduce((a, x) => a + x.v, 0) / 4;
     const p4 = weeks.slice(-8, -4).reduce((a, x) => a + x.v, 0) / 4;
@@ -1867,7 +1934,7 @@ function renderAudio() {
         (a.narrator ? '<p class="muted ed-line">Narração: ' + esc(a.narrator) + '</p>' : '') +
         '<div class="pageline"><strong id="abPct">' + Math.floor(st.pct * 100) + '%</strong> ouvido</div></div></div>' +
       '<div class="progress" role="progressbar" aria-label="Progresso do audiobook" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + Math.floor(st.pct * 100) + '"><div id="abBar" style="width:' + (st.pct * 100).toFixed(2) + '%"></div></div>' +
-      '<div class="progress-meta"><span id="abPos">' + hms(st.pos) + '</span><span id="abDur">' + hms(a.durationSec) + '</span></div>' +
+      '<div class="progress-meta"><span id="abPos">' + clockHms(st.pos) + '</span><span id="abDur">' + clockHms(a.durationSec) + '</span></div>' +
       '<div class="metrics ab-metrics">' +
         '<div class="metric hl"><span class="m-label">Faltam</span><strong id="abRem">' + hms(st.rem) + '</strong><span class="m-sub" id="abRemReal">' + (a.speed !== 1 ? 'a ' + String(a.speed).replace('.', ',') + '× ≈ ' + hms(st.realRem) + ' de escuta' : 'na velocidade normal') + '</span></div>' +
         '<div class="metric"><span class="m-label">Previsão de término</span><strong>' + (a.finished ? '—' : st.days <= 1 ? 'Hoje' : fmtDate(st.eta)) + '</strong><span class="m-sub">' + a.dailyGoalMin + ' min/dia de escuta</span></div>' +
@@ -1894,7 +1961,7 @@ function renderAudio() {
     }
     return '<article class="book-item' + (x.id === S.activeAudioId ? ' active' : '') + '">' + coverHtml(coverSrc(x), 'sm sq') +
       '<div class="bi-info"><h3>' + esc(x.title) + '</h3><p>' + esc(x.author || 'Autor não informado') + (x.narrator ? ' · narr. ' + esc(x.narrator) : '') + '</p>' +
-      '<p><span class="pg">' + Math.floor(st.pct * 100) + '%</span> · ' + esc(meta) + ' · ' + hms(x.durationSec) + '</p>' +
+      '<p><span class="pg">' + Math.floor(st.pct * 100) + '%</span> · ' + esc(meta) + ' · ' + clockHms(x.durationSec) + '</p>' +
       '<div class="progress sm"><div style="width:' + (st.pct * 100).toFixed(1) + '%"></div></div></div>' +
       '<div class="bi-actions"><button class="btn sm primary" type="button" data-act="abOpen" data-id="' + esc(x.id) + '">Ouvir</button>' +
       '<button class="btn sm" type="button" data-act="abEdit" data-id="' + esc(x.id) + '">Editar</button></div></article>';
@@ -1923,7 +1990,7 @@ function updateAudioLive() {
   setText('#abClock', fmtClock(listenNowMs()));
   setText('#abGain', '+' + hms(g) + ' do livro');
   setText('#abPct', Math.floor(st.pct * 100) + '%');
-  setText('#abPos', hms(st.pos));
+  setText('#abPos', clockHms(st.pos));
   setText('#abRem', hms(st.rem));
   const bar = $('#abBar'); if (bar) bar.style.width = (st.pct * 100).toFixed(2) + '%';
   if (st.rem <= 0) abStop(true);
@@ -1967,20 +2034,52 @@ function parseDur(txt) {
   if (!t) return NaN;
   let m = t.match(/^(\d+)\s*:\s*(\d{1,2})(?:\s*:\s*(\d{1,2}))?$/);
   if (m) return (+m[1]) * 3600 + (+m[2]) * 60 + (+(m[3] || 0));
-  m = t.match(/^(?:(\d+)\s*h)?\s*(?:(\d+)\s*(?:min|m))?\s*(?:(\d+)\s*s)?$/);
+  m = t.match(/^(?:(\d+)\s*h(?:oras?|rs?)?)?\s*(?:(\d+)\s*(?:min(?:utos?)?|m))?\s*(?:(\d+)\s*(?:s(?:eg(?:undos?)?)?))?$/);
   if (m && (m[1] || m[2] || m[3])) return (+(m[1] || 0)) * 3600 + (+(m[2] || 0)) * 60 + (+(m[3] || 0));
   if (/^\d+$/.test(t)) return (+t) * 60;
   return NaN;
 }
 const durTxt = (sec) => { sec = Math.round(sec || 0); return Math.floor(sec / 3600) + ':' + pad(Math.floor((sec % 3600) / 60)); };
+const splitHms = (sec) => { sec = Math.max(0, Math.round(sec || 0)); return [Math.floor(sec / 3600), Math.floor((sec % 3600) / 60), sec % 60]; };
+const clockHms = (sec) => { const [h, m, x] = splitHms(sec); return h + ':' + pad(m) + ':' + pad(x); };
+/* três caixas só com números (teclado numérico do celular): horas, minutos e segundos.
+ * Colar "6:06:29" ou "6h06min29s" na caixa de horas também funciona: o app separa sozinho. */
+function hmsInputs(name, sec, id) {
+  const v = sec == null ? ['', '', ''] : splitHms(sec);
+  const box = (suf, val, unit, ph) => '<label><input name="' + name + '_' + suf + '"' + (suf === 'h' && id ? ' id="' + id + '"' : '') +
+    ' type="text" inputmode="numeric" pattern="[0-9]*" enterkeyhint="next" autocomplete="off" placeholder="' + ph + '" value="' + (sec == null ? '' : val) + '"' +
+    ' aria-label="' + unit + '">' + (suf === 'h' ? 'h' : suf === 'm' ? 'min' : 's') + '</label>';
+  return '<div class="hms" data-hms="' + name + '">' + box('h', v[0], 'horas', '0') + box('m', pad(v[1]), 'minutos', '00') + box('s', pad(v[2]), 'segundos', '00') + '</div>';
+}
+function readHms(fd, name) {
+  const raw = ['h', 'm', 's'].map((k) => String(fd.get(name + '_' + k) || '').trim());
+  if (raw.every((x) => !x)) return null;
+  if (raw.some((x) => x && !/^\d+$/.test(x))) { const t = parseDur(raw.join(':').replace(/:+$/, '')); return isFinite(t) ? t : NaN; }
+  return (+raw[0] || 0) * 3600 + (+raw[1] || 0) * 60 + (+raw[2] || 0);
+}
+/* ao digitar: aceita só números; se colar um tempo completo, distribui nas três caixas */
+function hmsTyping(inp) {
+  const grp = inp.closest('.hms');
+  if (!grp) return;
+  const val = inp.value;
+  if (/^\d*$/.test(val)) return;
+  const t = parseDur(val.replace(/\s+/g, ' ').trim());
+  const ins = grp.querySelectorAll('input');
+  if (isFinite(t) && /[:h]/i.test(val)) {
+    const p = splitHms(t);
+    ins[0].value = p[0]; ins[1].value = pad(p[1]); ins[2].value = pad(p[2]);
+  } else inp.value = val.replace(/\D+/g, '');
+}
 function progressFields(a, mode) {
   mode = mode || 'heard';
   const val = !a ? '' : mode === 'pct' ? (a.durationSec ? Math.floor((a.positionSec / a.durationSec) * 1000) / 10 : 0) : mode === 'left' ? durTxt(a.durationSec - a.positionSec) : durTxt(a.positionSec);
   return '<label>Progresso</label><div class="seg seg-sm" role="tablist">' + [['heard', 'Tempo ouvido'], ['left', 'Tempo restante'], ['pct', 'Porcentagem']].map(([k, l]) =>
     '<button type="button" data-act="abMode" data-v="' + k + '" aria-selected="' + (k === mode) + '">' + l + '</button>').join('') + '</div>' +
     '<input type="hidden" name="pmode" value="' + mode + '">' +
-    '<div class="field"><input id="f-prog" name="prog" ' + (mode === 'pct' ? 'type="number" inputmode="decimal" min="0" max="100" step="0.1" placeholder="ex.: 44"' : 'inputmode="numeric" placeholder="h:mm (ex.: 5:02)"') + ' value="' + esc(val) + '">' +
-    '<p class="hint">' + (mode === 'pct' ? 'Porcentagem mostrada no app de áudio.' : mode === 'left' ? 'Ex.: o Audible mostra "6 h 28 min restantes" → 6:28.' : 'Tempo já ouvido (posição no livro), ex.: 5:02.') + '</p></div>';
+    '<div class="field">' + (mode === 'pct'
+      ? '<input id="f-prog" name="prog" type="text" inputmode="decimal" placeholder="ex.: 44,5" value="' + esc(String(val).replace('.', ',')) + '">'
+      : hmsInputs('prog', a ? (mode === 'left' ? a.durationSec - a.positionSec : a.positionSec) : null, 'f-prog')) +
+    '<p class="hint">' + (mode === 'pct' ? 'Porcentagem mostrada no app de áudio (aceita vírgula).' : mode === 'left' ? 'Ex.: o Audible mostra "6 h 06 min restantes" → 6 h 06 min 00 s.' : 'Tempo já ouvido (posição no livro), ex.: 5 h 02 min 30 s.') + '</p></div>';
 }
 function openAudioDialog(editId) {
   const a = editId ? audioById(editId) : null;
@@ -1998,8 +2097,9 @@ function openAudioDialog(editId) {
         '<div class="dlg-cover-btns"><button type="button" class="btn sm" data-act="coverSearch">' + ICON.search + ' Buscar capa</button>' +
         '<button type="button" class="btn sm ghost" data-act="coverPhoto">' + ICON.camera + ' Foto / galeria</button></div></div></div>' +
       '<div id="coverGrid" class="cover-grid" hidden></div>' +
-      '<div class="field-row"><div class="field"><label for="f-dur">Duração total (h:mm)</label><input id="f-dur" name="duration" inputmode="numeric" required placeholder="ex.: 11:30" value="' + (a ? durTxt(a.durationSec) : '') + '"></div>' +
-        '<div class="field"><label for="f-goal">Escuta por dia (min)</label><input id="f-goal" name="dailyGoalMin" type="number" inputmode="numeric" min="1" max="720" value="' + v.dailyGoalMin + '"></div></div>' +
+      '<div class="field"><label for="f-dur">Duração total</label>' + hmsInputs('dur', a ? a.durationSec : null, 'f-dur') +
+        '<p class="hint">Ex.: 6 h 06 min 29 s. Também pode colar 6:06:29 na caixa das horas.</p></div>' +
+      '<div class="field"><label for="f-goal">Escuta por dia (min)</label><input id="f-goal" name="dailyGoalMin" type="number" inputmode="numeric" min="1" max="720" value="' + v.dailyGoalMin + '"></div>' +
       '<div id="progBox">' + progressFields(a, 'heard') + '</div>' +
       (a ? '<div class="check field"><input type="checkbox" id="f-fin" name="finished"' + (a.finished ? ' checked' : '') + '><label for="f-fin">Audiobook concluído</label></div>' : '') +
       '<div class="dlg-actions">' + (a ? '<button type="button" class="btn danger" data-act="abDel" data-id="' + esc(a.id) + '">Excluir</button>' : '') +
@@ -2015,21 +2115,25 @@ function openAudioPosDlg() {
 }
 function readProgress(fd, durationSec) {
   const mode = String(fd.get('pmode') || 'heard');
-  const raw = String(fd.get('prog') || '').trim();
-  if (!raw) return null;
-  if (mode === 'pct') { const p = parseFloat(raw.replace(',', '.')); return isFinite(p) ? clamp(p, 0, 100) / 100 * durationSec : NaN; }
-  const t = parseDur(raw);
+  if (mode === 'pct') {
+    const raw = String(fd.get('prog') || '').trim();
+    if (!raw) return null;
+    const p = parseFloat(raw.replace('%', '').replace(',', '.'));
+    return isFinite(p) ? clamp(p, 0, 100) / 100 * durationSec : NaN;
+  }
+  const t = readHms(fd, 'prog');
+  if (t == null) return null;
   if (!isFinite(t)) return NaN;
   return mode === 'left' ? durationSec - t : t;
 }
 function submitAudio(f) {
   const fd = new FormData(f);
   const title = String(fd.get('title') || '').trim();
-  const dur = parseDur(fd.get('duration'));
+  const dur = readHms(fd, 'dur');
   if (!title) { toast('Informe o título.'); return; }
-  if (!(dur >= 60)) { toast('Informe a duração total, ex.: 11:30.'); return; }
+  if (!(dur >= 60)) { toast('Informe a duração total: horas, minutos e segundos (ex.: 6 h 06 min 29 s).'); return; }
   const pos = readProgress(fd, dur);
-  if (Number.isNaN(pos)) { toast('Progresso inválido. Use h:mm (ex.: 5:02) ou %.'); return; }
+  if (Number.isNaN(pos)) { toast('Progresso inválido. Preencha horas, minutos e segundos, ou a %.'); return; }
   const id = f.dataset.id;
   const fields = { title, author: String(fd.get('author') || '').trim(), narrator: String(fd.get('narrator') || '').trim(), publisher: String(fd.get('publisher') || '').trim(),
     durationSec: Math.round(dur), dailyGoalMin: clamp(parseInt(fd.get('dailyGoalMin'), 10) || 30, 1, 720) };
@@ -2040,7 +2144,7 @@ function submitAudio(f) {
     if (pos != null) a.positionSec = clamp(Math.round(pos), 0, a.durationSec);
     a.positionSec = Math.min(a.positionSec, a.durationSec);
     a.finished = fd.get('finished') === 'on' || a.positionSec >= a.durationSec;
-    if (a.finished) a.positionSec = a.durationSec;
+    if (a.finished) { a.positionSec = a.durationSec; if (!a.finishedAt) a.finishedAt = Date.now(); } else delete a.finishedAt;
   } else {
     a = newAudio(Object.assign({}, fields, { cover: fd.get('cover'), positionSec: pos || 0 }));
     S.audio.push(a);
@@ -2070,32 +2174,71 @@ function renderAvatar() {
   b.innerHTML = img ? '<img src="' + esc(img) + '" alt="">' : '<span>' + esc((name.trim()[0] || 'R').toUpperCase()) + '</span>';
   b.setAttribute('aria-label', img ? 'Foto de perfil (tocar para trocar)' : 'Adicionar foto de perfil');
 }
-function squareJpeg(file, size) {
+/* abre a imagem do arquivo: <img> e, se falhar, createImageBitmap (alguns formatos do celular) */
+function decodeImage(file) {
   return new Promise((res) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => {
-      const s2 = Math.min(img.naturalWidth, img.naturalHeight);
-      const c = document.createElement('canvas'); c.width = size; c.height = size;
-      c.getContext('2d').drawImage(img, (img.naturalWidth - s2) / 2, (img.naturalHeight - s2) / 2, s2, s2, 0, 0, size, size);
+    const fallback = () => {
       URL.revokeObjectURL(url);
-      res(c.toDataURL('image/jpeg', 0.85));
+      if (!window.createImageBitmap) { res(null); return; }
+      createImageBitmap(file).then((bm) => res({ src: bm, w: bm.width, h: bm.height }), () => res(null));
     };
-    img.onerror = () => { URL.revokeObjectURL(url); res(null); };
+    img.onload = () => {
+      if (!img.naturalWidth) { fallback(); return; }
+      (img.decode ? img.decode().catch(() => null) : Promise.resolve()).then(() => res({ src: img, w: img.naturalWidth, h: img.naturalHeight, url }));
+    };
+    img.onerror = fallback;
     img.src = url;
   });
 }
+async function squareJpeg(file, size) {
+  const im = await decodeImage(file);
+  if (!im) return null;
+  try {
+    const s2 = Math.min(im.w, im.h);
+    const c = document.createElement('canvas'); c.width = size; c.height = size;
+    const g = c.getContext('2d');
+    g.fillStyle = '#000'; g.fillRect(0, 0, size, size);
+    g.drawImage(im.src, (im.w - s2) / 2, (im.h - s2) / 2, s2, s2, 0, 0, size, size);
+    return c.toDataURL('image/jpeg', 0.86);
+  } catch (e) { return null; } finally { if (im.url) URL.revokeObjectURL(im.url); if (im.src.close) im.src.close(); }
+}
+/* seletor de arquivo fixo na página: no Android um <input> solto pode ser descartado
+ * enquanto a galeria/câmera está aberta, e a foto escolhida nunca chega ao app. */
+let filePick = null;
+let fileWaiter = null;
+function chooseFile(accept, onFile) {
+  if (!filePick) {
+    filePick = document.createElement('input');
+    filePick.type = 'file';
+    filePick.id = 'filePick';
+    filePick.tabIndex = -1;
+    filePick.setAttribute('aria-hidden', 'true');
+    filePick.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;pointer-events:none';
+    document.body.appendChild(filePick);
+    filePick.addEventListener('change', () => {
+      const f = filePick.files && filePick.files[0];
+      const cb = fileWaiter;
+      fileWaiter = null;
+      if (f && cb) cb(f);
+    });
+  }
+  filePick.accept = accept;
+  filePick.value = '';
+  fileWaiter = onFile;
+  filePick.click();
+}
 function pickAvatar() {
-  const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'image/*';
-  inp.onchange = async () => {
-    const f = inp.files && inp.files[0];
-    if (!f) return;
-    const d = await squareJpeg(f, 192);
-    if (!d) { toast('Não consegui abrir essa imagem.'); return; }
-    S.settings.avatar = d; save(); renderAvatar(); closeDialog(); toast('Foto de perfil atualizada.');
-  };
-  inp.click();
+  closeDialog();
+  chooseFile('image/*', async (f) => {
+    toast('Preparando a foto…');
+    const d = await squareJpeg(f, 256);
+    if (!d) { toast('Não consegui abrir essa imagem. Tente uma foto JPG ou PNG.'); return; }
+    S.settings.avatar = d;
+    if (!save()) { toast('Sem espaço para guardar a foto no celular.'); return; }
+    renderAvatar(); toast('Foto de perfil atualizada.');
+  });
 }
 function avatarMenu() {
   if (!S.settings.avatar) { pickAvatar(); return; }
@@ -2204,11 +2347,7 @@ async function exportJson() {
   download('cronoleitura-backup-' + dateKey() + '.json', JSON.stringify(copy, null, 1), 'application/json');
 }
 function importJson() {
-  const inp = document.createElement('input');
-  inp.type = 'file'; inp.accept = 'application/json,.json';
-  inp.onchange = () => {
-    const f = inp.files && inp.files[0];
-    if (!f) return;
+  chooseFile('application/json,.json', (f) => {
     const rd = new FileReader();
     rd.onload = () => {
       try {
@@ -2224,8 +2363,7 @@ function importJson() {
       } catch (e) { toast('Arquivo de backup inválido.'); }
     };
     rd.readAsText(f);
-  };
-  inp.click();
+  });
 }
 
 /* ======================= diálogo e aviso ======================= */
@@ -2274,9 +2412,10 @@ const handlers = {
   habRange: (el) => { hab.range = el.dataset.v; renderHabits(); },
   calNav: (el) => { const m = hab.month; hab.month = new Date(m.getFullYear(), m.getMonth() + (+el.dataset.v), 1); hab.day = null; renderHabits(); },
   calDay: (el) => { hab.day = hab.day === el.dataset.k ? null : el.dataset.k; renderHabits(); const d = $('.day-detail'); if (d) d.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); },
-  goalPeriod: (el) => { const g = S.settings.goal; g.period = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
-  goalUnit: (el) => { const g = S.settings.goal; g.unit = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
-  goalStep: (el) => { const g = S.settings.goal; const step = g.unit === 'books' ? 1 : g.period === 'year' ? 100 : g.period === 'month' ? 30 : g.period === 'week' ? 15 : 5; g.value = Math.max(1, g.value + step * (+el.dataset.v)); save(); renderHabits(); keepGoalOpen(); },
+  habKind: (el) => { hab.kind = el.dataset.v; S.settings.habKind = hab.kind; hab.day = null; save(); renderHabits(); },
+  goalPeriod: (el) => { const g = goalOf(hab.kind); g.period = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
+  goalUnit: (el) => { const g = goalOf(hab.kind); g.unit = el.dataset.v; g.value = defaultGoal(g.period, g.unit); save(); renderHabits(); keepGoalOpen(); },
+  goalStep: (el) => { const g = goalOf(hab.kind); const step = g.unit === 'books' ? 1 : g.period === 'year' ? 100 : g.period === 'month' ? 30 : g.period === 'week' ? 15 : 5; g.value = Math.max(1, g.value + step * (+el.dataset.v)); save(); renderHabits(); keepGoalOpen(); },
   libView: (el) => { S.settings.libView = el.dataset.v === 'grid' ? 'grid' : 'list'; save(); renderBooks(); const h = $('.lib-head'); if (h) h.scrollIntoView({ block: 'start' }); },
   abNew: () => openAudioDialog(null),
   abEdit: (el) => openAudioDialog(el.dataset.id),
@@ -2384,6 +2523,7 @@ document.addEventListener('submit', (e) => {
   }
   else if (kind === 'jump') { const q = parseInt(new FormData(f).get('page'), 10); closeDialog(); if (q) jumpTo(q); }
 });
+document.addEventListener('input', (e) => { if (e.target.matches && e.target.matches('.hms input')) hmsTyping(e.target); });
 document.addEventListener('change', (e) => {
   const kind = e.target.dataset && e.target.dataset.change;
   if (!kind) return;
@@ -2399,7 +2539,7 @@ document.addEventListener('change', (e) => {
     if (info && info.el < info.tot) S.timer.pomoDone = false;
     save(); renderRead();
   } else if (kind === 'goalValue') {
-    S.settings.goal.value = Math.max(1, parseInt(e.target.value, 10) || 1); save(); renderHabits(); keepGoalOpen();
+    goalOf(hab.kind).value = Math.max(1, parseInt(e.target.value, 10) || 1); save(); renderHabits(); keepGoalOpen();
   } else if (kind === 'gbkey') {
     S.settings.gbKey = String(e.target.value || '').trim(); gPausedUntil = 0; save();
     toast(S.settings.gbKey ? 'Chave do Google salva.' : 'Chave do Google removida.');
@@ -2471,6 +2611,7 @@ function setupPwa() {
 }
 function applyFx() { document.body.classList.toggle('calm', S.settings.fx === false); }
 applyFx();
+hab.kind = HAB_KINDS[S.settings.habKind] ? S.settings.habKind : 'books';
 renderAvatar();
 (function footer() { const v = $('#appVer'); if (v) v.textContent = 'v' + APP_VERSION; const d = $('#appDev'); if (d) d.textContent = DEVELOPER; })();
 setupPwa();
