@@ -149,7 +149,7 @@ function save() {
 const bookById = (id) => S.books.find((b) => b.id === id) || null;
 const audioById = (id) => (S.audio || []).find((a) => a.id === id) || null;
 const anyById = (id) => bookById(id) || audioById(id);
-const APP_VERSION = '2.17.0';
+const APP_VERSION = '2.18.0';
 const DEVELOPER = 'Robert Simão dos Santos';
 /* Kindle: livros sem número de página usam "posição" (pos. 241 de 10.483). Uma posição é um
  * trecho fixo do texto (≈128 bytes), igual em qualquer tamanho de letra. Para metas e hábitos
@@ -1949,6 +1949,9 @@ function renderHabits() {
       '<input id="goalVal" type="number" inputmode="numeric" min="1" value="' + g.value + '" data-change="goalValue"><button class="btn" type="button" data-act="goalStep" data-v="1" aria-label="Aumentar">+</button></div>' +
     '</details></div>';
 
+  // ---- em andamento: quanto já foi, quanto falta e previsão automática pela sua média real
+  const progCard = progressCardHtml(kind);
+
   // ---- semana atual
   const w0 = startOfWeek(now);
   const weekItems = [];
@@ -1965,7 +1968,7 @@ function renderHabits() {
   const lastWeekSec = secBetween(addDays(w0, -7), w0, H.secOf);
   const thisWeekSec = secBetween(w0, addDays(w0, 7), H.secOf);
   const dailyGoalMin = g.unit === 'min' && g.period === 'day' ? g.value : 0;
-  const weekCard = '<div class="card"><h2>Esta semana</h2>' +
+  const weekCard = '<div class="card week-card"><h2>Esta semana</h2>' +
     '<div class="week-head"><div><strong class="big">' + daysRead + '</strong> de 7 dias com ' + noun + '</div>' +
     '<div class="muted">' + fmtMin(thisWeekSec) + ' · semana passada ' + fmtMin(lastWeekSec) + '</div></div>' +
     barsHtml(weekItems, { cls: 'week-bars', label: 'Minutos por dia nesta semana', values: true, min: 10, goal: dailyGoalMin, goalTip: dailyGoalMin + ' min/dia' }) +
@@ -2064,9 +2067,53 @@ function renderHabits() {
 
   // ---- evolução: dia a dia, entre sessões e por semana
   const evoCard = evolutionCard(sessions, now, w0);
-  el.innerHTML = kindSeg + goalCard + weekCard + calCard + '<div class="section-title">Período</div>' + filter + summary + hourCard + bookCard;
-  const weekEl = el.children[2];
+  el.innerHTML = kindSeg + goalCard + progCard + weekCard + calCard + '<div class="section-title">Período</div>' + filter + summary + hourCard + bookCard;
+  const weekEl = el.querySelector('.week-card') || el.children[2];
   if (weekEl) weekEl.insertAdjacentHTML('afterend', evoCard); else el.insertAdjacentHTML('beforeend', evoCard);
+}
+
+function bookDaySec(b, k) { return (b.daily[k] || 0) + (k === dateKey() && sessionMine(b) ? unflushedSec() : 0); }
+function progressCardHtml(kind) {
+  const rows = [];
+  const allReadAvg = avgOver(Object.fromEntries(Array.from({ length: AVG_DAYS }, (_, i) => { const k = dateKey(addDays(new Date(), -i)); return [k, daySec(k)]; })));
+  if (kind !== 'audio') {
+    S.books.filter((b) => !b.finished).forEach((b) => {
+      const pace = bookPace(b);
+      const loc = isLoc(b);
+      const done = loc ? b.currentPage : b.currentPage - 1;
+      const pct = clamp(done / b.totalPages, 0, 1);
+      const est = estimate(b, pace, pageElapsedSec(b));
+      const own = avgOver(Object.fromEntries(Array.from({ length: AVG_DAYS }, (_, i) => { const k = dateKey(addDays(new Date(), -i)); return [k, bookDaySec(b, k)]; })));
+      const per = own >= 60 ? { sec: own, basis: 'média ' + Math.round(own / 60) + ' min/dia neste livro' } : allReadAvg >= 60 ? { sec: allReadAvg, basis: 'média ' + Math.round(allReadAvg / 60) + ' min/dia de leitura' } : { sec: b.dailyGoalMin * 60, basis: 'pela meta ' + b.dailyGoalMin + ' min/dia' };
+      const days = est ? Math.max(1, Math.ceil(est.remSec / per.sec)) : 0;
+      rows.push({ last: Math.max(0, ...b.segments.map((g) => g.ts), b.addedAt || 0), html: progRow(b, false, pct,
+        (loc ? 'Pos. ' + nfmt(b.currentPage) + ' de ' + nfmt(b.totalPages) : 'Pág. ' + b.currentPage + ' de ' + b.totalPages) + ' · lido ' + fmtMin(b.timeSec || 0),
+        est ? 'Faltam ' + fmtDur(est.remSec, true) + ' de leitura' : 'Leia com o cronômetro para calcular quanto falta',
+        est ? 'Termina ' + (days <= 1 ? 'hoje' : 'em ' + days + ' dias · ' + fmtDate(addDays(startOfDay(new Date()), days - 1))) + ' (' + per.basis + ')' : '') });
+    });
+  }
+  if (kind !== 'books') {
+    const m = listenSums();
+    (S.audio || []).filter((a) => !a.finished).forEach((a) => {
+      const st = audioStats(a, liveGain(a));
+      const heard = Object.keys(m.byAb[a.id] || {}).reduce((t, k) => t + m.byAb[a.id][k], 0);
+      const last = (S.listenLog || []).filter((l) => l.abId === a.id).reduce((t, l) => Math.max(t, l.end), a.addedAt || 0);
+      rows.push({ last, html: progRow(a, true, st.pct,
+        clockHms(st.pos) + ' de ' + clockHms(a.durationSec) + (heard >= 60 ? ' · escutado ' + fmtMin(heard) : ''),
+        'Faltam ' + hms(st.rem) + (a.speed !== 1 ? ' (≈ ' + hms(st.realRem) + ' a ' + String(a.speed).replace('.', ',') + '×)' : ''),
+        'Termina ' + (st.days <= 1 ? 'hoje' : 'em ' + st.days + ' dias · ' + fmtDate(st.eta)) + ' (' + st.basis + ')') });
+    });
+  }
+  if (!rows.length) return '';
+  rows.sort((x, y) => y.last - x.last);
+  return '<div class="card"><h2>Em andamento</h2>' + rows.slice(0, 6).map((r) => r.html).join('') +
+    '<p class="note">A previsão usa a sua média real dos últimos ' + AVG_DAYS + ' dias e se atualiza sozinha; sem histórico, usa a meta diária.</p></div>';
+}
+function progRow(x, audio, pct, l1, l2, l3) {
+  return '<div class="prog-row">' + coverHtml(coverSrc(x), 'xs' + (audio ? ' sq' : '')) +
+    '<div class="prog-main"><div class="prog-title">' + (audio ? '🎧 ' : '📖 ') + esc(x.title) + '<span class="prog-pct">' + Math.floor(pct * 100) + '%</span></div>' +
+    '<div class="progress sm"><div style="width:' + (pct * 100).toFixed(1) + '%"></div></div>' +
+    '<div class="prog-sub">' + esc(l1) + '</div><div class="prog-sub">' + esc(l2) + '</div>' + (l3 ? '<div class="prog-sub hl-sub">' + esc(l3) + '</div>' : '') + '</div></div>';
 }
 
 /* ---------- evolução ---------- */
@@ -2199,17 +2246,76 @@ function newAudio(o) {
     id: uid('a'), title: (o.title || 'Sem título').trim(), author: (o.author || '').trim(), narrator: (o.narrator || '').trim(),
     publisher: (o.publisher || '').trim(), link: safeUrl(o.link), cover: safeUrl(o.cover), durationSec: Math.max(60, Math.round(+o.durationSec) || 3600),
     positionSec: Math.max(0, Math.round(+o.positionSec) || 0), speed: +o.speed || 1, dailyGoalMin: clamp(Math.round(+o.dailyGoalMin) || 30, 1, 720),
+    app: AB_APPS[o.app] ? o.app : (/audible/i.test((o.publisher || '') + ' ' + (o.link || '')) ? 'audible' : (S.settings.lastAbApp || 'audible')),
     finished: false, addedAt: Date.now()
   };
+}
+/* ---------- vínculo com o app de áudio (Audible / Smart AudioBook) ----------
+ * O CronoLeitura não enxerga outro app tocando (o Android não permite isso a um site).
+ * Por isso ele mesmo abre o app de áudio: um toque em "Ouvir no Audible" começa o
+ * cronômetro e abre o Audible. Ao voltar, o app pergunta se você terminou e, se quiser,
+ * a posição atual — o tempo real de escuta sai da diferença de posição ÷ velocidade. */
+const AB_APPS = {
+  audible: { name: 'Audible', pkg: 'com.audible.application' },
+  smart: { name: 'Smart AudioBook', pkg: 'ak.alizandro.smartaudiobookplayer' },
+  none: { name: '', pkg: '' }
+};
+const abApp = (a) => AB_APPS[(a && a.app) || 'audible'] || AB_APPS.audible;
+const isAndroid = () => /Android/i.test(navigator.userAgent || '');
+function openAbApp(a) {
+  const ap = abApp(a);
+  if (!ap.pkg) return false;
+  if (!isAndroid()) { toast('Abra o ' + ap.name + ' no celular. O cronômetro já está contando.'); return false; }
+  location.href = abIntentUrl(ap.pkg);
+  return true;
+}
+const abIntentUrl = (pkg) => 'intent:#Intent;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;package=' + pkg +
+  ';S.browser_fallback_url=' + encodeURIComponent('https://play.google.com/store/apps/details?id=' + pkg) + ';end';
+/* ---------- média real de escuta (sem precisar informar nada) ---------- */
+let listenMemo = { key: '', byDay: {}, byAb: {} };
+function listenSums() {
+  const key = (S.listenLog || []).length + '|' + dateKey();
+  if (listenMemo.key !== key) {
+    const byDay = {};
+    const byAb = {};
+    (S.listenLog || []).forEach((l) => {
+      const k = dateKey(new Date(l.start));
+      byDay[k] = (byDay[k] || 0) + (l.sec || 0);
+      const m = byAb[l.abId] || (byAb[l.abId] = {});
+      m[k] = (m[k] || 0) + (l.sec || 0);
+    });
+    listenMemo = { key, byDay, byAb };
+  }
+  return listenMemo;
+}
+const AVG_DAYS = 14;
+function avgOver(map) { let t = 0; for (let i = 0; i < AVG_DAYS; i++) t += (map && map[dateKey(addDays(new Date(), -i))]) || 0; return t / AVG_DAYS; }
+/* ritmo diário para a previsão: média do próprio audiobook (14 dias) › média de todos › meta */
+function abPerDay(a) {
+  const m = listenSums();
+  const own = avgOver(m.byAb[a.id]);
+  if (own >= 60) return { sec: own, basis: 'sua média neste audiobook: ' + Math.round(own / 60) + ' min/dia nos últimos 14 dias' };
+  const all = avgOver(m.byDay);
+  if (all >= 60) return { sec: all, basis: 'sua média de escuta: ' + Math.round(all / 60) + ' min/dia nos últimos 14 dias' };
+  return { sec: a.dailyGoalMin * 60, basis: 'pela meta: ' + a.dailyGoalMin + ' min/dia' };
+}
+function logListen(a, sec, gain, end, src) {
+  sec = Math.max(0, Math.round(sec));
+  if (!a || sec < 5) return null;
+  const e = { id: uid('l'), abId: a.id, start: end - sec * 1000, end, sec, gain: Math.round(gain), speed: a.speed || 1, src: src || 'manual' };
+  S.listenLog.push(e);
+  S.listenLog.sort((x, y) => x.start - y.start);
+  if (S.listenLog.length > 4000) S.listenLog.splice(0, S.listenLog.length - 4000);
+  return e;
 }
 function audioStats(a, extraSec) {
   const pos = clamp(a.positionSec + (extraSec || 0), 0, a.durationSec);
   const rem = a.durationSec - pos;
   const pct = a.durationSec ? pos / a.durationSec : 0;
   const realRem = rem / (a.speed || 1);
-  const perDay = a.dailyGoalMin * 60;
-  const days = realRem > 0 ? Math.ceil(realRem / perDay) : 0;
-  return { pos, rem, pct, realRem, days, eta: addDays(startOfDay(new Date()), Math.max(0, days - 1)) };
+  const pd = abPerDay(a);
+  const days = realRem > 0 ? Math.ceil(realRem / pd.sec) : 0;
+  return { pos, rem, pct, realRem, days, basis: pd.basis, eta: addDays(startOfDay(new Date()), Math.max(0, days - 1)) };
 }
 function liveGain(a) { return S.listen.status !== 'idle' && S.listen.abId === a.id ? (listenNowMs() / 1000) * (a.speed || 1) : 0; }
 
@@ -2227,8 +2333,12 @@ function renderAudio() {
     const ctrl = a.finished
       ? '<div class="finished-banner">Audiobook concluído! ' + hms(a.durationSec) + ' ouvidos.</div>'
       : (L.status === 'running' && mine
-        ? '<div class="btn-row"><button class="btn primary" type="button" data-act="abPause">' + ICON.pause + ' Pausar</button><button class="btn" type="button" data-act="abStop">' + ICON.stop + ' Encerrar</button></div>'
-        : '<button class="btn primary xl" type="button" data-act="abPlay">' + ICON.play + (mine ? ' Continuar a ouvir' : ' Começar a ouvir') + '</button>' +
+        ? (abApp(a).pkg ? '<button class="btn primary block" type="button" data-act="abOpenApp">' + ICON.play + ' Voltar ao ' + esc(abApp(a).name) + '</button>' : '') +
+          '<div class="btn-row"><button class="btn' + (abApp(a).pkg ? '' : ' primary') + '" type="button" data-act="abPause">' + ICON.pause + ' Pausar</button><button class="btn" type="button" data-act="abFinish">' + ICON.stop + ' Encerrar</button></div>'
+        : (abApp(a).pkg
+          ? '<button class="btn primary xl" type="button" data-act="abPlayApp">' + ICON.play + (mine ? ' Continuar no ' : ' Ouvir no ') + esc(abApp(a).name) + '</button>' +
+            '<button class="btn ghost sm block" type="button" data-act="abPlay">Só cronometrar (sem abrir o app)</button>'
+          : '<button class="btn primary xl" type="button" data-act="abPlay">' + ICON.play + (mine ? ' Continuar a ouvir' : ' Começar a ouvir') + '</button>') +
           (mine ? '<button class="btn block" type="button" data-act="abStop">' + ICON.stop + ' Encerrar sessão</button>' : ''));
     cur = '<div class="card ab-now">' +
       '<div class="ab-hero"><button type="button" class="cover-btn" data-act="coverDlg" data-id="' + esc(a.id) + '" aria-label="Trocar capa">' + coverHtml(coverSrc(a), 'sq') + '<span class="cover-edit">Trocar capa</span></button>' +
@@ -2240,7 +2350,7 @@ function renderAudio() {
       '<div class="progress-meta"><span id="abPos">' + clockHms(st.pos) + '</span><span id="abDur">' + clockHms(a.durationSec) + '</span></div>' +
       '<div class="metrics ab-metrics">' +
         '<div class="metric hl"><span class="m-label">Faltam</span><strong id="abRem">' + hms(st.rem) + '</strong><span class="m-sub" id="abRemReal">' + (a.speed !== 1 ? 'a ' + String(a.speed).replace('.', ',') + '× ≈ ' + hms(st.realRem) + ' de escuta' : 'na velocidade normal') + '</span></div>' +
-        '<div class="metric"><span class="m-label">Previsão de término</span><strong>' + (a.finished ? '—' : st.days <= 1 ? 'Hoje' : fmtDate(st.eta)) + '</strong><span class="m-sub">' + a.dailyGoalMin + ' min/dia de escuta</span></div>' +
+        '<div class="metric"><span class="m-label">Previsão de término</span><strong>' + (a.finished ? '—' : st.days <= 1 ? 'Hoje' : fmtDate(st.eta)) + '</strong><span class="m-sub">' + esc(st.basis) + '</span></div>' +
         '<div class="metric"><span class="m-label">Sessão atual</span><strong id="abClock">' + fmtClock(mine ? listenNowMs() : 0) + '</strong><span class="m-sub" id="abGain">' + (mine ? '+' + hms(liveGain(a)) + ' do livro' : 'tempo real ouvindo') + '</span></div>' +
       '</div>' +
       '<label>Velocidade de reprodução</label>' + spd +
@@ -2314,22 +2424,28 @@ function abPause() {
   L.accMs += Date.now() - L.runStart; L.runStart = null; L.status = 'paused';
   save(); renderAudio(); bell('pause');
 }
-function abStop(auto) {
+function abStop(auto, posSec) {
   const L = S.listen;
   if (L.status === 'idle') return;
   const a = audioById(L.abId);
   if (L.status === 'running') { L.accMs += Date.now() - L.runStart; }
-  const sec = L.accMs / 1000;
-  if (a && sec >= 5) {
-    const gain = Math.min(a.durationSec - a.positionSec, sec * (a.speed || 1));
+  let sec = L.accMs / 1000;
+  let gain = a ? sec * (a.speed || 1) : 0;
+  // posição informada (copiada do Audible): o avanço real manda; o tempo de escuta = avanço ÷ velocidade
+  if (a && posSec != null && isFinite(posSec)) {
+    gain = clamp(Math.round(posSec), 0, a.durationSec) - a.positionSec;
+    if (gain > 0) sec = Math.min(sec, gain / (a.speed || 1)); else { a.positionSec = clamp(Math.round(posSec), 0, a.durationSec); sec = 0; gain = 0; }
+  }
+  if (a && sec >= 5 && gain > 0) {
+    gain = Math.min(a.durationSec - a.positionSec, gain);
     a.positionSec = Math.min(a.durationSec, Math.round(a.positionSec + gain));
-    S.listenLog.push({ id: L.id, abId: a.id, start: L.startedAt || Date.now() - sec * 1000, end: Date.now(), sec: Math.round(sec), gain: Math.round(gain), speed: a.speed || 1 });
+    S.listenLog.push({ id: L.id, abId: a.id, start: L.startedAt || Date.now() - sec * 1000, end: Date.now(), sec: Math.round(sec), gain: Math.round(gain), speed: a.speed || 1, src: L.app ? 'app' : 'timer' });
     if (S.listenLog.length > 4000) S.listenLog.splice(0, S.listenLog.length - 4000);
     if (a.positionSec >= a.durationSec) { a.finished = true; a.finishedAt = Date.now(); }
   }
   S.listen = idleListen();
   save(); renderAudio(); bell('stop');
-  if (a) toast(a.finished ? 'Audiobook concluído! 🎧' : 'Sessão de escuta salva: +' + hms(Math.min(a.durationSec, sec * (a.speed || 1))) + ' do livro.');
+  if (a) toast(a.finished ? 'Audiobook concluído! 🎧' : sec >= 5 && gain > 0 ? 'Escuta salva: ' + hms(sec) + ' ouvindo · +' + hms(gain) + ' do livro.' : 'Sessão encerrada.');
 }
 /* converte "11:30", "11h30", "11 h 30 min", "690" (minutos) em segundos */
 function parseDur(txt) {
@@ -2373,11 +2489,14 @@ function hmsTyping(inp) {
     ins[0].value = p[0]; ins[1].value = pad(p[1]); ins[2].value = pad(p[2]);
   } else inp.value = val.replace(/\D+/g, '');
 }
-function progressFields(a, mode) {
+function progressFields(a, mode, withListen) {
   mode = mode || 'heard';
+  if (mode === 'listened') {
+    return '<label>Progresso</label>' + progModes(mode, withListen) + '<input type="hidden" name="pmode" value="listened">' +
+      '<div class="field">' + hmsInputs('prog', null, 'f-prog') + '<p class="hint">Quanto tempo você escutou (tempo real). O livro avança esse tempo × a velocidade.</p></div>';
+  }
   const val = !a ? '' : mode === 'pct' ? (a.durationSec ? Math.floor((a.positionSec / a.durationSec) * 1000) / 10 : 0) : mode === 'left' ? durTxt(a.durationSec - a.positionSec) : durTxt(a.positionSec);
-  return '<label>Progresso</label><div class="seg seg-sm" role="tablist">' + [['heard', 'Tempo ouvido'], ['left', 'Tempo restante'], ['pct', 'Porcentagem']].map(([k, l]) =>
-    '<button type="button" data-act="abMode" data-v="' + k + '" aria-selected="' + (k === mode) + '">' + l + '</button>').join('') + '</div>' +
+  return '<label>Progresso</label>' + progModes(mode, withListen) +
     '<input type="hidden" name="pmode" value="' + mode + '">' +
     '<div class="field">' + (mode === 'pct'
       ? '<input id="f-prog" name="prog" type="text" inputmode="decimal" placeholder="ex.: 44,5" value="' + esc(String(val).replace('.', ',')) + '">'
@@ -2406,19 +2525,46 @@ function openAudioDialog(editId) {
 
       '<div class="field"><label for="f-dur">Duração total</label>' + hmsInputs('dur', a ? a.durationSec : null, 'f-dur') +
         '<p class="hint">Ex.: 6 h 06 min 29 s. Também pode colar 6:06:29 na caixa das horas.</p></div>' +
-      '<div class="field"><label for="f-goal">Escuta por dia (min)</label><input id="f-goal" name="dailyGoalMin" type="number" inputmode="numeric" min="1" max="720" value="' + v.dailyGoalMin + '"></div>' +
+      '<div class="field-row"><div class="field"><label for="f-goal">Meta de escuta por dia (min)</label><input id="f-goal" name="dailyGoalMin" type="number" inputmode="numeric" min="1" max="720" value="' + v.dailyGoalMin + '"></div>' +
+        '<div class="field"><label for="f-app">Ouço no app</label><select id="f-app" name="app">' + [['audible', 'Audible'], ['smart', 'Smart AudioBook'], ['none', 'Outro (não abrir)']].map(([k, l]) =>
+          '<option value="' + k + '"' + ((v.app || S.settings.lastAbApp || 'audible') === k ? ' selected' : '') + '>' + l + '</option>').join('') + '</select></div></div>' +
       '<div id="progBox">' + progressFields(a, 'heard') + '</div>' +
       (a ? '<div class="check field"><input type="checkbox" id="f-fin" name="finished"' + (a.finished ? ' checked' : '') + '><label for="f-fin">Audiobook concluído</label></div>' : '') +
       '<div class="dlg-actions">' + (a ? '<button type="button" class="btn danger" data-act="abDel" data-id="' + esc(a.id) + '">Excluir</button>' : '') +
         '<button type="button" class="btn" data-act="closeDlg">Cancelar</button><button type="submit" class="btn primary">Salvar</button></div>' +
     '</form></div>');
 }
+function openFinishDlg(back) {
+  const L = S.listen;
+  const a = audioById(L.abId);
+  if (!a || L.status === 'idle') return;
+  const el = listenNowMs() / 1000;
+  const est = Math.min(a.durationSec, Math.round(a.positionSec + el * (a.speed || 1)));
+  const ap = abApp(a);
+  openDialog('<div class="dlg-body"><h2 id="dlgTitle">' + (back ? 'Voltou do ' + esc(ap.name || 'app de áudio') : 'Encerrar escuta') + '</h2>' +
+    '<p class="muted">Cronômetro: <b>' + hms(el) + '</b> desde ' + hhmm(L.startedAt || Date.now()) + ' · ' + esc(a.title) + ' a ' + String(a.speed).replace('.', ',') + '×</p>' +
+    '<form data-form="abFinish" data-id="' + esc(a.id) + '">' +
+    '<label>Posição agora no ' + esc(ap.name || 'app') + ' (opcional, deixa exato)</label>' + hmsInputs('fin', est, 'f-fin') +
+    '<p class="hint">Já vem a estimativa pelo cronômetro. Se você pausou o áudio antes, copie o tempo ouvido do app: o tempo real de escuta é calculado pela diferença ÷ velocidade.</p>' +
+    '<div class="dlg-actions">' + (back && ap.pkg ? '<button type="button" class="btn" data-act="abKeep">Continuo ouvindo</button>' : '<button type="button" class="btn" data-act="closeDlg">Cancelar</button>') +
+      '<button type="submit" class="btn primary">Terminei: salvar</button></div></form></div>');
+}
 function openAudioPosDlg() {
   const a = audioById(S.activeAudioId);
   if (!a) return;
-  openDialog('<div class="dlg-body"><h2 id="dlgTitle">Atualizar posição</h2><p class="muted">Copie do seu app de áudio (Audible, Smart AudioBook…).</p>' +
-    '<form data-form="audioPos" data-id="' + esc(a.id) + '"><div id="progBox">' + progressFields(a, 'heard') + '</div>' +
+  const now = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  openDialog('<div class="dlg-body"><h2 id="dlgTitle">Atualizar posição</h2>' +
+    '<p class="muted">Agora: <b>' + clockHms(a.positionSec) + '</b> de ' + clockHms(a.durationSec) + ' (' + Math.floor(a.positionSec / a.durationSec * 100) + '%). Copie do ' + esc(abApp(a).name || 'app de áudio') + ' — não precisa ter usado o cronômetro.</p>' +
+    '<form data-form="audioPos" data-id="' + esc(a.id) + '"><div id="progBox">' + progressFields(a, 'heard', true) + '</div>' +
+    '<div class="field"><label for="f-spd">Velocidade em que ouviu</label><select id="f-spd" name="speed">' + SPEEDS.map((v) => '<option value="' + v + '"' + (v === a.speed ? ' selected' : '') + '>' + String(v).replace('.', ',') + '×</option>').join('') + '</select></div>' +
+    '<div class="check field"><input type="checkbox" id="f-logit" name="logit" checked><label for="f-logit">Registrar o que avançou como escuta (Hábitos)</label></div>' +
+    '<div class="field"><label for="f-when">Terminou de ouvir em</label><input id="f-when" name="when" type="datetime-local" value="' + now + '"></div>' +
     '<div class="dlg-actions"><button type="button" class="btn" data-act="closeDlg">Cancelar</button><button type="submit" class="btn primary">Salvar</button></div></form></div>');
+}
+function progModes(mode, withListen) {
+  const list = [['heard', 'Tempo ouvido'], ['left', 'Tempo restante'], ['pct', 'Porcentagem']].concat(withListen ? [['listened', 'Escutei']] : []);
+  return '<div class="seg seg-sm' + (withListen ? ' seg4' : '') + '" role="tablist">' + list.map(([k, l]) =>
+    '<button type="button" data-act="abMode" data-v="' + k + '" aria-selected="' + (k === mode) + '">' + l + '</button>').join('') + '</div>';
 }
 function readProgress(fd, durationSec) {
   const mode = String(fd.get('pmode') || 'heard');
@@ -2433,6 +2579,35 @@ function readProgress(fd, durationSec) {
   if (!isFinite(t)) return NaN;
   return mode === 'left' ? durationSec - t : t;
 }
+function submitAudioPos(f) {
+  const a = audioById(f.dataset.id); if (!a) return;
+  const fd = new FormData(f);
+  const speed = +fd.get('speed') || a.speed || 1;
+  const mode = String(fd.get('pmode') || 'heard');
+  let pos;
+  let sec = null;
+  if (mode === 'listened') {
+    const t = readHms(fd, 'prog');
+    if (t == null || !isFinite(t) || t <= 0) { toast('Informe quanto tempo escutou.'); return; }
+    sec = t; pos = a.positionSec + t * speed;
+  } else pos = readProgress(fd, a.durationSec);
+  if (pos == null || Number.isNaN(pos)) { toast('Preencha horas, minutos e segundos, ou a %.'); return; }
+  pos = clamp(Math.round(pos), 0, a.durationSec);
+  const gain = pos - a.positionSec;
+  a.speed = speed;
+  const whenTs = fd.get('when') ? new Date(String(fd.get('when'))).getTime() : Date.now();
+  const end = isFinite(whenTs) ? Math.min(whenTs, Date.now()) : Date.now();
+  let e = null;
+  let logIt = gain > 0 && fd.get('logit') === 'on';
+  const lsec = sec != null ? sec : gain / speed;
+  // salto grande (ex.: acertar a posição de algo ouvido há dias): confirma antes de virar uma sessão só
+  if (logIt && lsec > 3 * 3600 && !confirm('Registrar ' + hms(lsec) + ' de escuta de uma vez só?\n\nOK = registrar · Cancelar = só atualizar a posição')) logIt = false;
+  if (logIt) e = logListen(a, lsec, gain, end, 'manual');
+  a.positionSec = pos;
+  if (pos >= a.durationSec) { a.finished = true; a.finishedAt = a.finishedAt || end; } else { a.finished = false; delete a.finishedAt; }
+  save(); closeDialog(); renderAudio();
+  toast(e ? 'Registrado: ' + hms(e.sec) + ' de escuta (+' + hms(gain) + ' do livro). ' + Math.floor(pos / a.durationSec * 100) + '%.' : 'Posição atualizada: ' + Math.floor(pos / a.durationSec * 100) + '%.');
+}
 function submitAudio(f) {
   const fd = new FormData(f);
   const title = String(fd.get('title') || '').trim();
@@ -2443,7 +2618,9 @@ function submitAudio(f) {
   if (Number.isNaN(pos)) { toast('Progresso inválido. Preencha horas, minutos e segundos, ou a %.'); return; }
   const id = f.dataset.id;
   const link = safeUrl(((String(fd.get('link') || '').match(/https?:\/\/[^\s<>"']+/i) || [''])[0]).replace(/[)\].,;]+$/, ''));
-  const fields = { title, link, author: String(fd.get('author') || '').trim(), narrator: String(fd.get('narrator') || '').trim(), publisher: String(fd.get('publisher') || '').trim(),
+  const app = AB_APPS[fd.get('app')] ? String(fd.get('app')) : 'audible';
+  S.settings.lastAbApp = app;
+  const fields = { title, link, app, author: String(fd.get('author') || '').trim(), narrator: String(fd.get('narrator') || '').trim(), publisher: String(fd.get('publisher') || '').trim(),
     durationSec: Math.round(dur), dailyGoalMin: clamp(parseInt(fd.get('dailyGoalMin'), 10) || 30, 1, 720) };
   let a;
   if (id) {
@@ -2693,6 +2870,7 @@ function fillAudioForm(r) {
   set('#f-pub', pub);
   if (r.durationSec) { const p = splitHms(r.durationSec); set('[name=dur_h]', String(p[0])); set('[name=dur_m]', pad(p[1])); set('[name=dur_s]', pad(p[2])); }
   if (r.cover) pickCover(r.cover);
+  const ap = $('#f-app'); if (ap && r.platform === 'Audible') ap.value = 'audible';
 }
 /* ---------- Audible: catálogo oficial (JSON) pelo código ASIN do link ----------
  * É a forma mais confiável: devolve título, autores, narradores, editora, duração e capa 500 px.
@@ -3124,7 +3302,14 @@ const handlers = {
   abPlay: () => abPlay(),
   abPause: () => abPause(),
   abStop: () => abStop(false),
-  abAdd: (el) => { const a = audioById(S.activeAudioId); if (!a) return; a.positionSec = Math.min(a.durationSec, a.positionSec + (+el.dataset.v)); if (a.positionSec >= a.durationSec) { a.finished = true; a.finishedAt = Date.now(); } save(); renderAudio(); toast('Posição atualizada: ' + hms(a.positionSec) + '.'); },
+  abAdd: (el) => {
+    const a = audioById(S.activeAudioId); if (!a) return;
+    const gain = Math.min(a.durationSec - a.positionSec, +el.dataset.v);
+    a.positionSec += gain;
+    logListen(a, gain / (a.speed || 1), gain, Date.now(), 'manual');
+    if (a.positionSec >= a.durationSec) { a.finished = true; a.finishedAt = Date.now(); }
+    save(); renderAudio(); toast('+' + hms(gain) + ' do livro registrados.');
+  },
   abPosDlg: () => openAudioPosDlg(),
   abImport: () => { const t = $('#f-link'); importAudioLink(t ? t.value : ''); },
   abPaste: async () => {
@@ -3135,7 +3320,11 @@ const handlers = {
     if (t) t.value = text;
     importAudioLink(text);
   },
-  abMode: (el) => { const box = $('#progBox'); const f = el.closest('form'); if (!box || !f) return; const a = audioById(f.dataset.id); box.innerHTML = progressFields(a, el.dataset.v); },
+  abMode: (el) => { const box = $('#progBox'); const f = el.closest('form'); if (!box || !f) return; const a = audioById(f.dataset.id); box.innerHTML = progressFields(a, el.dataset.v, f.dataset.form === 'audioPos'); },
+  abPlayApp: () => { const a = audioById(S.activeAudioId); if (!a) return; if (S.listen.status !== 'running') abPlay(); if (S.listen.status === 'running') { S.listen.app = abApp(a).pkg ? a.app : ''; save(); openAbApp(a); } },
+  abOpenApp: () => { const a = audioById(S.listen.abId || S.activeAudioId); if (a) openAbApp(a); },
+  abFinish: () => openFinishDlg(false),
+  abKeep: () => { closeDialog(); const a = audioById(S.listen.abId); if (a) openAbApp(a); },
   avatar: () => avatarMenu(),
   avatarPick: () => pickAvatar(),
   avatarDel: () => { delete S.settings.avatar; save(); renderAvatar(); closeDialog(); toast('Foto removida.'); },
@@ -3227,12 +3416,12 @@ document.addEventListener('submit', (e) => {
   if (kind === 'search') runSearch(new FormData(f).get('q') || '');
   else if (kind === 'book') submitBook(f);
   else if (kind === 'audio') submitAudio(f);
-  else if (kind === 'audioPos') {
-    const a = audioById(f.dataset.id); if (!a) return;
-    const pos = readProgress(new FormData(f), a.durationSec);
-    if (pos == null || Number.isNaN(pos)) { toast('Use h:mm (ex.: 5:02) ou %.'); return; }
-    a.positionSec = clamp(Math.round(pos), 0, a.durationSec); a.finished = a.positionSec >= a.durationSec;
-    save(); closeDialog(); renderAudio(); toast('Posição atualizada: ' + Math.floor(a.positionSec / a.durationSec * 100) + '%.');
+  else if (kind === 'audioPos') submitAudioPos(f);
+  else if (kind === 'abFinish') {
+    const fd = new FormData(f);
+    const p = readHms(fd, 'fin');
+    closeDialog();
+    abStop(false, p == null || !isFinite(p) ? null : p);
   }
   else if (kind === 'loc') submitLoc(f);
   else if (kind === 'jump') { const q = parseInt(new FormData(f).get('page'), 10); closeDialog(); if (q) jumpTo(q); }
@@ -3288,8 +3477,18 @@ document.addEventListener('error', (e) => {
   if (t && t.tagName === 'IMG' && t.classList.contains('opt-img')) { const o = t.closest('.cover-opt'); if (o) o.remove(); return; }
   if (t && t.tagName === 'IMG' && t.classList.contains('cover-img') && t.parentElement) t.parentElement.innerHTML = ICON.book;
 }, true);
+let hiddenAt = 0;
+function backFromAudioApp() {
+  const L = S.listen;
+  if (L.status !== 'running' || !L.app || dlg.open) return;
+  if (curTab !== 'audio') showTab('audio');
+  openFinishDlg(true);
+}
 document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); if (S.listen.status === 'running') { S.listen.leftAt = Date.now(); save(); } }
   if (document.visibilityState === 'visible') {
+    if (hiddenAt && Date.now() - hiddenAt >= 20000) setTimeout(backFromAudioApp, 300);
+    hiddenAt = 0;
     if (S.timer.status === 'running') acquireWake();
     updateClock(); fillMetrics();
   } else if (S.timer.status !== 'idle') { flush(); save(); }
@@ -3338,6 +3537,26 @@ renderAvatar();
 setupPwa();
 showTab('read');
 loadCovers().then(() => { if (Object.keys(coverUrls).length) renderCurrent(); });
+let urlActed = false;
+(function urlActions() {
+  const sp = new URLSearchParams(location.search);
+  const act = sp.get('ab');
+  if (!act) return;
+  urlActed = true;
+  history.replaceState(null, '', location.pathname);
+  showTab('audio');
+  const a = audioById(S.activeAudioId);
+  if (!a) { toast('Cadastre um audiobook primeiro.'); return; }
+  if (act === 'start' || act === 'play') {
+    if (S.listen.status !== 'running') abPlay();
+    S.listen.app = abApp(a).pkg ? a.app : ''; save();
+    toast('Escuta iniciada: ' + a.title + '. Toque em “Voltar ao ' + (abApp(a).name || 'app') + '”.');
+  } else if (act === 'stop') {
+    if (S.listen.status === 'idle') { toast('Nenhuma escuta em andamento.'); return; }
+    abStop(false);
+  }
+})();
+(function backOnLoad() { if (!urlActed && S.listen.status === 'running' && S.listen.app) setTimeout(backFromAudioApp, 600); })();
 (function receiveShare() {
   const sp = new URLSearchParams(location.search);
   const shared = ['share_url', 'share_text', 'share_title'].map((k) => sp.get(k)).filter(Boolean).join(' ');

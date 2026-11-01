@@ -50,5 +50,31 @@
       "text": "share_text",
       "url": "share_url"
     }
-  }
+  },
+  "shortcuts": [
+    {
+      "name": "Ouvir audiobook",
+      "short_name": "Ouvir",
+      "description": "Começa a cronometrar a escuta do audiobook atual",
+      "url": "./?ab=start",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Encerrar escuta",
+      "short_name": "Encerrar",
+      "description": "Encerra e salva a escuta em andamento",
+      "url": "./?ab=stop",
+      "icons": [
+        {
+          "src": "icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
+  ]
 }

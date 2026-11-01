@@ -1,4 +1,4 @@
-CronoLeitura v2.17 (PWA)
+CronoLeitura v2.18 (PWA)
 
 COMO PUBLICAR
 1. Todos os arquivos ficam na RAIZ do repositório (ícones ao lado do index.html).
@@ -41,6 +41,22 @@ Sem chave, o Google divide um limite único entre todos os sites sem chave, e el
 6. No app: Histórico > Google Livros > cole a chave. Sem cartão de crédito; ~1000 buscas/dia.
 
 AUDIOBOOKS (aba "Áudio")
+- OUVIR NO AUDIBLE / SMART AUDIOBOOK: no cadastro escolha "Ouço no app". O botão principal vira
+  "Ouvir no Audible": um toque começa o cronômetro E abre o app de áudio. Ao voltar ao
+  CronoLeitura, ele pergunta "Terminei: salvar" (com a posição estimada; se você pausou antes,
+  copie a posição do app e o tempo real de escuta sai da diferença ÷ velocidade) ou
+  "Continuo ouvindo" (volta ao app).
+  (Um site não consegue enxergar outro app tocando; por isso o CronoLeitura é quem abre o app.)
+- ATALHOS NO ÍCONE: toque e segure no ícone do CronoLeitura: "Ouvir audiobook" e "Encerrar escuta".
+  (Reinstale o app depois desta versão para os atalhos aparecerem.)
+- 100% AUTOMÁTICO (opcional, Android): num app de automação (MacroDroid, Tasker), crie
+  "quando o Audible começar a tocar → abrir https://dillax.github.io/CronoLivro/?ab=start" e
+  "quando parar → abrir https://dillax.github.io/CronoLivro/?ab=stop".
+- ATUALIZAR POSIÇÃO SEM CRONÔMETRO: copie do Audible/Smart AudioBook o tempo ouvido, o restante
+  ou a %, ou use "Escutei" (tempo real). Escolha a velocidade e quando terminou de ouvir: o
+  avanço vira uma sessão de escuta nos Hábitos. +15/+30 min também contam.
+- PREVISÃO AUTOMÁTICA: a data de término usa a sua média real dos últimos 14 dias (do próprio
+  audiobook, ou de toda a escuta); sem histórico, usa a meta diária.
 - AUDIBLE: com o link da página (ou o link curto adbl.co do botão Compartilhar), o app lê o
   catálogo oficial do Audible pelo código do livro (ASIN): título, autor, narrador, editora,
   duração e capa 500 px. Se o catálogo não responder, lê a própria página.
@@ -98,6 +114,8 @@ DESEMPENHO
 - Se o celular ainda travar: Histórico > Preferências > desmarque "Efeitos de luz".
 
 HÁBITOS (aba "Hábitos")
+- "Em andamento": cada livro/audiobook com %, quanto já leu/escutou, quanto falta e quando
+  termina pela sua média real (atualiza sozinho).
 - No topo: Livros | Audiobooks | Tudo. Cada um tem meta, semana, calendário, evolução,
   horários e lista próprios. Em Audiobooks a evolução compara a duração de cada escuta e
   o "avanço" é o tempo do livro (já com a velocidade). Cada aba guarda a sua meta.

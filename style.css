@@ -782,3 +782,14 @@ dialog.pick { width: 100%; max-width: 640px; height: 100dvh; max-height: 100dvh;
 .pv-ok { position: fixed; right: 22px; bottom: calc(26px + env(safe-area-inset-bottom)); width: 68px; height: 68px; border-radius: 50%; border: 0; cursor: pointer;
   background: #29b6f6; color: #fff; font-size: 2rem; font-weight: 800; box-shadow: 0 6px 22px rgba(0, 0, 0, .6), 0 0 18px rgba(41, 182, 246, .6); }
 .pv-ok[hidden] { display: none !important; }
+
+/* ===== v2.18: em andamento, app de áudio ===== */
+.prog-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid rgba(205, 238, 255, .08); }
+.prog-row:last-of-type { border-bottom: 0; }
+.prog-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.prog-title { display: flex; justify-content: space-between; gap: 8px; font-weight: 700; font-size: .92rem; }
+.prog-pct { color: var(--diamond); flex: none; }
+.prog-sub { font-size: .8rem; color: var(--muted); }
+.prog-sub.hl-sub { color: #bfefff; }
+.seg.seg4 { grid-template-columns: repeat(4, 1fr); }
+.seg.seg4 button { font-size: .74rem; padding: 8px 2px; }
